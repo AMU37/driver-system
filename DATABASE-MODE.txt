@@ -1,0 +1,3 @@
+Supabase PostgreSQL is the primary database for V1.0.1.
+
+Render hosts the Python/FastAPI backend and the Next.js frontend as native web services. Docker is not required for local development or production deployment.

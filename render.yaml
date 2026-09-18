@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: driver-transport-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.13
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        fromService:
+          name: driver-transport-web
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: COMPANY_CODE_DEFAULT
+        value: YCSR
+      - key: TRIP_RELEASE_HOURS
+        value: "8"
+      - key: MICROSOFT_ENABLED
+        value: "false"
+      - key: MICROSOFT_OUTBOUND_URL
+        sync: false
+      - key: MICROSOFT_INBOUND_API_KEY
+        generateValue: true
+      - key: MICROSOFT_TIMEOUT_SECONDS
+        value: "15"
+
+  - type: web
+    name: driver-transport-web
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm start -- -p $PORT
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 24.21.0
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: driver-transport-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
