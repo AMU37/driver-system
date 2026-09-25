@@ -1,3 +1,5 @@
+import { normalizeBaseUrl, isLocalHostUrl } from "./offlineStore";
+
 export type User = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string; must_change_password?: boolean };
 export type Passenger = { id: number; employee_code: string; name_snapshot: string; job_title_snapshot?: string | null; department_snapshot?: string | null; company_snapshot?: string | null; housing_location_snapshot?: string | null; visit_purpose: string; boarded_at: string; source: string; needs_review: boolean };
 export type Trip = { id: number; trip_number: string; driver_id: string; company_code: string; status: string; started_at?: string | null; completed_at?: string | null; transferred_at?: string | null; employee_count: number; planned_bus_number?: string | null; actual_bus_number?: string | null; route_name?: string | null; origin?: string | null; destination?: string | null; scheduled_start_at?: string | null; release_at?: string | null; passengers?: Passenger[] };
@@ -11,23 +13,26 @@ export function getBaseUrl(): string {
   if (typeof window !== "undefined") {
     try {
       const cfg = JSON.parse(localStorage.getItem("ds_config") || "{}");
-      const override = (cfg.server_url || "").trim();
-      if (override) return override.replace(/\/$/, "");
+      const override = normalizeBaseUrl((cfg.server_url || "").trim());
+      if (override) return override;
     } catch { /* ignore */ }
   }
   return API_URL.render();
 }
 export const API_URL = (() => {
-  if (typeof window === "undefined") return { render: () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001" };
-  let configured = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
-  if (configured.includes("localhost")) {
+  if (typeof window === "undefined") return { render: () => process.env.NEXT_PUBLIC_API_URL || "" };
+  let configured = (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/+$/, "");
+  if (configured && !isLocalHostUrl(configured)) {
+    return { render: () => configured };
+  }
+  if (configured) {
     const host = window.location.hostname;
     if (host && host !== "localhost" && host !== "127.0.0.1" && host !== "::1") {
       const port = new URL(configured).port || "8001";
       return { render: () => `http://${host}:${port}` };
     }
   }
-  return { render: () => configured };
+  return { render: () => window.location.origin };
 })();
 
 function saveSession(data: { access_token: string; refresh_token: string; user: User }) {

@@ -108,16 +108,25 @@ export function isOnline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine;
 }
 
+export function normalizeBaseUrl(url: string): string {
+  const trimmed = (url || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+export function isLocalHostUrl(url: string): boolean {
+  return /(^|\.)localhost$|127\.0\.0\.1|::1/.test(url.split("://").pop() || "");
+}
+
 export function backendBaseUrl(): string {
   const cfg = getConfig();
-  if (cfg.server_url && cfg.server_url.trim()) return cfg.server_url.trim().replace(/\/$/, "");
-  const configured = (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/$/, "");
-  if (!configured) return "";
-  if (/localhost|127\.0\.0\.1|:1$/.test(configured)) {
-    if (isNativePlatform()) return "";
-    return configured;
-  }
-  return configured;
+  const raw = (cfg.server_url || "").trim();
+  if (raw) return normalizeBaseUrl(raw);
+  const configured = (process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/+$/, "");
+  if (configured && !isLocalHostUrl(configured)) return configured;
+  if (isNativePlatform()) return "";
+  return typeof window !== "undefined" ? window.location.origin : "";
 }
 
 export async function nativeRequest(input: string, init: { method?: string; headers?: Record<string, string>; body?: unknown; timeoutMs?: number } = {}): Promise<{ status: number; ok: boolean; data: any }> {
