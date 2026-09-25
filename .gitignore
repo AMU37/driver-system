@@ -7,7 +7,6 @@ backend/.pytest_cache/
 frontend/.env
 frontend/node_modules/
 frontend/.next/
-frontend/dist/
 frontend/tsconfig.tsbuildinfo
 *.log
 temp/

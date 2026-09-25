@@ -1,7 +1,9 @@
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -123,3 +125,25 @@ def root():
     if settings.is_production:
         return {"name": settings.app_name, "health": "/health", "version": APP_VERSION}
     return {"name": settings.app_name, "docs": "/docs", "health": "/health", "version": APP_VERSION}
+
+
+DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+@app.get("/{path:path}", include_in_schema=False)
+def static_site(path: str):
+    """Serve the built static web app (single-service deployment)."""
+    if not DIST_DIR.is_dir():
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    dist_root = DIST_DIR.resolve()
+    target = (DIST_DIR / path).resolve()
+    try:
+        target.relative_to(dist_root)
+    except ValueError:
+        return JSONResponse({"detail": "forbidden"}, status_code=403)
+    if path and target.is_file():
+        return FileResponse(target)
+    index = dist_root / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    return JSONResponse({"detail": "not found"}, status_code=404)
