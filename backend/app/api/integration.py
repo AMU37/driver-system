@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+import hmac
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.ratelimit import enforce, integration_limiter
 from app.models import Employee, PlannedTrip
 from app.schemas import EmployeeSyncPayload, PlannedTripImport
 from app.services.trips import import_planned_trip
@@ -11,8 +14,17 @@ from app.services.trips import import_planned_trip
 router = APIRouter(prefix="/api/integration", tags=["integration"])
 
 
-def require_inbound_key(x_integration_key: str | None = Header(default=None)):
-    if not settings.microsoft_inbound_api_key or x_integration_key != settings.microsoft_inbound_api_key:
+def require_inbound_key(
+    request: Request,
+    x_integration_key: str | None = Header(default=None),
+) -> None:
+    key = f"integration-ip:{request.client.host if request.client else 'unknown'}"
+    enforce(integration_limiter, key)
+    if not settings.microsoft_inbound_api_key:
+        raise HTTPException(503, "التكامل غير مهيأ حاليًا")
+    if not x_integration_key or not hmac.compare_digest(
+        x_integration_key, settings.microsoft_inbound_api_key
+    ):
         raise HTTPException(401, "مفتاح التكامل غير صحيح")
 
 

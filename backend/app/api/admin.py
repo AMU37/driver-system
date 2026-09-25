@@ -1,14 +1,14 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import select, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_password
-from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, Trip, TripEmployee, TripStatus, User, UserRole
+from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
 from app.schemas import AdminTripPlanCreate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
 from app.services.employees import import_employee_rows, parse_employee_rows
 from app.services.trips import ensure_bus, ensure_route
@@ -22,7 +22,7 @@ def planned_out(item: PlannedTrip) -> dict:
 
 @router.get("/drivers", response_model=list[UserOut])
 def drivers(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
-    return db.scalars(select(User).where(User.role == UserRole.driver).order_by(User.full_name)).all()
+    return db.scalars(select(User).where(User.role == UserRole.driver, User.is_active.is_(True)).order_by(User.full_name)).all()
 
 
 @router.post("/drivers", response_model=UserOut)
@@ -40,19 +40,30 @@ def create_driver(payload: DriverCreate, user: User = Depends(require_roles(User
 
 @router.get("/buses")
 def buses(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
-    return db.scalars(select(Bus).order_by(Bus.number)).all()
+    return db.scalars(select(Bus).where(Bus.is_active.is_(True)).order_by(Bus.number)).all()
 
 
 @router.get("/employees")
-def employees(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
-    return db.scalars(select(Employee).order_by(Employee.employee_code).limit(1000)).all()
+def employees(search: str | None = None, user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
+    stmt = select(Employee)
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(or_(Employee.employee_code.like(like), Employee.name.like(like)))
+    return db.scalars(stmt.order_by(Employee.employee_code).limit(5000)).all()
+
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
 @router.post("/employees/import")
 def import_employees(file: UploadFile = File(...), user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
-    data = file.file.read()
+    data = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "حجم الملف يتجاوز الحد المسموح (5 ميجابايت)")
     try:
         rows = parse_employee_rows(data, file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     except Exception as exc:
         raise HTTPException(400, f"تعذر قراءة الملف: {exc}")
     if not rows:
@@ -74,19 +85,22 @@ def create_plan(payload: AdminTripPlanCreate, user: User = Depends(require_roles
         raise HTTPException(404, "السائق غير موجود")
     bus = ensure_bus(db, payload.bus_number, payload.company_code)
     route = ensure_route(db, payload.route_name, payload.origin, payload.destination, payload.company_code)
+    scheduled = payload.scheduled_start_at
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=timezone.utc)
     release_hours = payload.release_hours if payload.release_hours is not None else settings.trip_release_hours
-    release_at = payload.scheduled_start_at - timedelta(hours=release_hours)
+    release_at = scheduled - timedelta(hours=release_hours)
     status = TripStatus.available if datetime.now(timezone.utc) >= release_at else TripStatus.planned
-    day_count = db.scalar(select(func.count(PlannedTrip.id)).where(func.date(PlannedTrip.scheduled_start_at) == payload.scheduled_start_at.date())) or 0
+    day_count = db.scalar(select(func.count(PlannedTrip.id)).where(func.date(PlannedTrip.scheduled_start_at) == scheduled.date())) or 0
     item = PlannedTrip(
-        trip_number=f"TR-{payload.bus_number}-{payload.scheduled_start_at:%Y%m%d}-{payload.company_code}-{day_count + 1:03d}",
+        trip_number=f"TR-{payload.bus_number}-{scheduled:%Y%m%d}-{payload.company_code}-{day_count + 1:03d}",
         driver_id=driver.id,
         bus_id=bus.id,
         route_id=route.id,
         company_code=payload.company_code,
-        trip_date=payload.scheduled_start_at,
+        trip_date=scheduled,
         release_at=release_at,
-        scheduled_start_at=payload.scheduled_start_at,
+        scheduled_start_at=scheduled,
         status=status,
     )
     db.add(item)
@@ -113,6 +127,34 @@ def new_employees(user: User = Depends(require_roles(UserRole.supervisor, UserRo
         }
         for req, trip_number, creator_name in rows
     ]
+
+
+@router.get("/trip-reports")
+def trip_reports(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
+    """تقارير الرحلات المكتملة التي سلمتها أجهزة السائقين — تظهر الرحلة وقائمة الصاعدين للمشرف."""
+    items = db.scalars(select(TripReport).order_by(TripReport.received_at.desc()).limit(300)).all()
+    out = []
+    for r in items:
+        trip = (r.payload or {}).get("trip") or {}
+        out.append({
+            "id": r.id,
+            "trip_number": r.trip_number,
+            "driver_username": r.driver_username,
+            "driver_name": r.driver_name or r.driver_username,
+            "bus_number": trip.get("bus_number"),
+            "route": trip.get("route"),
+            "origin": trip.get("origin"),
+            "destination": trip.get("destination"),
+            "trip_type": trip.get("trip_type"),
+            "started_at": trip.get("started_at"),
+            "completed_at": trip.get("completed_at"),
+            "scheduled_start_at": trip.get("scheduled_start_at"),
+            "employee_count": r.employee_count,
+            "integration_status": r.integration_status,
+            "received_at": r.received_at,
+            "raw": r.payload,
+        })
+    return out
 
 
 @router.post("/new-employees/{request_id}/review")

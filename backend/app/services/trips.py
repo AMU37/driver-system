@@ -217,7 +217,12 @@ def import_planned_trip(db: Session, payload):
     route = ensure_route(db, payload.route_name, payload.origin, payload.destination, payload.company_code)
     release_hours = payload.release_hours if payload.release_hours is not None else settings.trip_release_hours
     release_at = payload.scheduled_start_at - timedelta(hours=release_hours)
-    status = TripStatus.available if now_utc() >= release_at else TripStatus.planned
+    if release_at.tzinfo is None:
+        # DB columns round-trip naive UTC (SQLite); match the comparison side.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        status = TripStatus.available if now >= release_at else TripStatus.planned
+    else:
+        status = TripStatus.available if now_utc() >= release_at else TripStatus.planned
     planned = PlannedTrip(
         external_id=payload.external_id,
         trip_number=payload.trip_number,

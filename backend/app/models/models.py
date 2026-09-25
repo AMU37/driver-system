@@ -122,6 +122,7 @@ class User(Base):
     driver_code: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)
     company_code: Mapped[str] = mapped_column(String(30), default="YCSR", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -247,3 +248,17 @@ class AuditLog(Base):
     entity_id: Mapped[str] = mapped_column(String(150))
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TripReport(Base):
+    """نسخة من الرحلة المكتملة تصل من جهاز السائق حتى يراها المشرف في لوحة التحكم."""
+    __tablename__ = "trip_reports"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    driver_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    driver_username: Mapped[str] = mapped_column(String(100), index=True)
+    driver_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    trip_number: Mapped[str] = mapped_column(String(150), index=True)
+    employee_count: Mapped[int] = mapped_column(Integer, default=0)
+    integration_status: Mapped[str] = mapped_column(String(30), default="server_only")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

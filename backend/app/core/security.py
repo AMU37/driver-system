@@ -11,6 +11,12 @@ from app.core.config import settings
 
 ALGORITHM = "HS256"
 
+# Hard caps on scrypt params read from stored hash to prevent CPU/memory exhaustion
+# if a stored hash is ever tampered with.
+MAX_N = 2**16
+MAX_R = 16
+MAX_P = 4
+
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
@@ -30,7 +36,10 @@ def verify_password(password: str, stored: str) -> bool:
         padding_digest = "=" * (-len(digest_b64) % 4)
         salt = base64.urlsafe_b64decode(salt_b64 + padding_salt)
         expected = base64.urlsafe_b64decode(digest_b64 + padding_digest)
-        actual = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=int(n), r=int(r), p=int(p))
+        n = max(1, min(int(n), MAX_N))
+        r = max(1, min(int(r), MAX_R))
+        p = max(1, min(int(p), MAX_P))
+        actual = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p)
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False

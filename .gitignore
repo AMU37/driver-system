@@ -7,10 +7,16 @@ backend/.pytest_cache/
 frontend/.env
 frontend/node_modules/
 frontend/.next/
+frontend/dist/
 frontend/tsconfig.tsbuildinfo
 *.log
 temp/
 tmp/
+summary.md
+
+# Root-level exports / attachments (local only, not for the repo)
+/*.xlsx
+/رحلات*
 
 # Render
 .render/

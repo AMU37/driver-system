@@ -18,10 +18,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: CORS_ORIGINS
-        fromService:
-          name: driver-transport-web
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        value: "*"
       - key: COMPANY_CODE_DEFAULT
         value: YCSR
       - key: TRIP_RELEASE_HOURS
@@ -41,7 +38,7 @@ services:
     plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
-    startCommand: npm start -- -p $PORT
+    startCommand: node scripts/serve-static.mjs
     healthCheckPath: /
     autoDeploy: true
     envVars:
@@ -51,8 +48,3 @@ services:
         value: 24.21.0
       - key: NEXT_TELEMETRY_DISABLED
         value: "1"
-      - key: NEXT_PUBLIC_API_URL
-        fromService:
-          name: driver-transport-api
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL

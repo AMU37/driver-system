@@ -36,6 +36,20 @@ _ALIASES = {
 
 _FIELDS = ["employee_code", "name", "job_title", "department_name", "company_name", "housing_location"]
 
+MAX_IMPORT_ROWS = 50000
+MAX_FIELD_LEN = 200
+
+
+def _sanitize(text: str) -> str:
+    # Neutralize CSV/Excel formula injection: values beginning with = + - @
+    # or tab/CR are prefixed with a single quote so they are never evaluated
+    # as formulas when the data is later opened in a spreadsheet.
+    if text and (text[0] in "=+-@" or text[:1] in ("\t", "\r")):
+        return "'" + text
+    if len(text) > MAX_FIELD_LEN:
+        return text[:MAX_FIELD_LEN]
+    return text
+
 
 def _norm_header(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
@@ -56,9 +70,9 @@ def _clean(value):
     if value is None:
         return None
     if isinstance(value, float) and value.is_integer():
-        return str(int(value))
+        return _sanitize(str(int(value)))
     text = str(value).strip()
-    return text or None
+    return _sanitize(text) if text else None
 
 
 def parse_employee_rows(data: bytes, filename: str) -> list[dict]:
@@ -73,6 +87,8 @@ def parse_employee_rows(data: bytes, filename: str) -> list[dict]:
         for record in rows:
             if record is None or all(cell is None or str(cell).strip() == "" for cell in record):
                 continue
+            if len(parsed) >= MAX_IMPORT_ROWS:
+                raise ValueError(f"الملف يحتوي أكثر من {MAX_IMPORT_ROWS} صف")
             row: dict[str, str] = {}
             for idx, field in mapping:
                 col = header.index(idx)
@@ -89,6 +105,8 @@ def parse_employee_rows(data: bytes, filename: str) -> list[dict]:
         parsed = []
         for record in reader:
             if any(str(v or "").strip() for v in record.values()):
+                if len(parsed) >= MAX_IMPORT_ROWS:
+                    raise ValueError(f"الملف يحتوي أكثر من {MAX_IMPORT_ROWS} صف")
                 row: dict[str, str] = {}
                 for header, field in mapping:
                     row[field] = _clean(record.get(header))

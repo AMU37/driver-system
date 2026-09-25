@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWTError
 from sqlalchemy import select
@@ -10,8 +10,15 @@ from app.models import User, UserRole
 
 bearer = HTTPBearer(auto_error=False)
 
+# Endpoints a user may still reach while a password change is forced.
+ALLOWED_UNLESS_CHANGED = {"/api/auth/change-password", "/api/auth/me"}
 
-def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db: Session = Depends(get_db)) -> User:
+
+def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> User:
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="يلزم تسجيل الدخول")
     try:
@@ -23,6 +30,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
     user = db.scalar(select(User).where(User.id == payload["sub"], User.is_active.is_(True)))
     if not user:
         raise HTTPException(status_code=401, detail="المستخدم غير موجود أو غير نشط")
+    if user.must_change_password and request.url.path not in ALLOWED_UNLESS_CHANGED:
+        raise HTTPException(
+            status_code=403,
+            detail="يجب تغيير كلمة المرور قبل المتابعة",
+            headers={"X-Must-Change-Password": "true"},
+        )
     return user
 
 

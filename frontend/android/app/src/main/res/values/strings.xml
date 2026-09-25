@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">نظام الرحلات</string>
+    <string name="title_activity_main">نظام الرحلات</string>
+    <string name="package_name">com.ycs.drivertransport</string>
+    <string name="custom_url_scheme">com.ycs.drivertransport</string>
+</resources>

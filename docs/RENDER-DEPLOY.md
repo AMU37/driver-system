@@ -52,7 +52,11 @@ postgresql://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres?sslmode=req
 
 الكود يحوّل تلقائياً `postgresql://` إلى صيغة SQLAlchemy `postgresql+psycopg://`.
 
-وسيتم توليد `SECRET_KEY` و`MICROSOFT_INBOUND_API_KEY` تلقائياً بواسطة Render.
+وسيتم توليد `SECRET_KEY` و`MICROSOFT_INBOUND_API_KEY` تلقائياً بواسطة Render (زر **Generate**). 
+
+> **أمان الإقلاع**: عند `ENVIRONMENT=production` يرفض Backend الإقلاع إذا كان `SECRET_KEY` ضعيفاً/معروفاً، وإذا كان `MICROSOFT_ENABLED=true` بمفتاح واردة ضعيف. تأكد أن القيم المولّدة سُجّلت (وليس الافتراضيات). التفاصيل: `docs/SECURITY.md`.
+>
+> **حسابات التجربة**: أي حساب يستخدم كلمة مرور افتراضية معروفة من `seed.py` يُضطر لتغييرها فوراً عند أول دخول في الإنتاج (يُحبس كل العمليات حتى ذلك).
 
 ## 5) عنوان Frontend وBackend
 

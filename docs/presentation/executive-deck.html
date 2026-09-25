@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>نظام إدارة رحلات السائقين — عرض الإدارة العليا</title>
+<style>
+:root{
+  --primary:#1769e0; --primary2:#0f56bd; --primary-soft:#eaf2ff;
+  --bg:#f4f7fb; --surface:#ffffff; --text:#17202b; --muted:#6d7a8a; --line:#e3e9f0;
+  --success:#0f9d68; --success-soft:#eaf9f2;
+  --danger:#dc3e55; --danger-soft:#fff0f2;
+  --warn:#b98200; --warn-soft:#fff7e4;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:#0d1620; color:var(--text);
+  font-family:"Cairo","Segoe UI",Tahoma,"Noto Naskh Arabic",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+.deck{height:100vh;display:grid;place-items:center;position:relative}
+.slide{
+  position:absolute; width:1280px; height:720px; background:var(--bg);
+  border-radius:6px; overflow:hidden; box-shadow:0 30px 90px rgba(0,0,0,.5);
+  opacity:0; visibility:hidden; transform:translateY(14px) scale(.995);
+  transition:opacity .28s ease, transform .28s ease, visibility .28s;
+}
+.slide.active{opacity:1;visibility:visible;transform:none}
+.inner{position:absolute;inset:0;padding:42px 56px;display:flex;flex-direction:column}
+.inner::before{content:"";position:absolute;top:0;right:0;left:0;height:5px;background:linear-gradient(90deg,var(--primary),#39a0ff 55%,var(--success))}
+.eyebrow{letter-spacing:.18em;font-size:12px;font-weight:800;color:var(--primary)}
+h1{font-size:42px;line-height:1.3;margin-top:8px;letter-spacing:-.4px}
+h2{font-size:30px;line-height:1.35;margin-top:6px;letter-spacing:-.3px}
+.lead{font-size:16.5px;color:var(--muted);margin-top:10px;line-height:1.8;max-width:1000px}
+.slide-head{margin-bottom:20px}
+.foot{position:absolute;bottom:18px;right:56px;left:56px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#9aa7b5}
+.foot .brand{display:flex;align-items:center;gap:8px;font-weight:700;color:#8b98a6}
+.foot .dot{width:7px;height:7px;border-radius:50%;background:var(--primary)}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--primary-soft);color:var(--primary)}
+.pill.g{background:var(--success-soft);color:var(--success)}
+.pill.r{background:var(--danger-soft);color:var(--danger)}
+.pill.w{background:var(--warn-soft);color:var(--warn)}
+.grid{display:grid;gap:13px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:18px 20px}
+.card h3{font-size:15.5px;margin-bottom:7px;display:flex;align-items:center;gap:9px;line-height:1.5}
+.card p{font-size:13px;color:var(--muted);line-height:1.85}
+.card ul{margin:8px 0 0;list-style:none}
+.card li{font-size:12.7px;color:#4d5c6e;line-height:1.95;padding-right:15px;position:relative}
+.card li::before{content:"";position:absolute;right:0;top:12px;width:6px;height:6px;border-radius:50%;background:var(--primary)}
+.ico{width:32px;height:32px;border-radius:10px;background:var(--primary-soft);color:var(--primary);display:grid;place-items:center;flex:0 0 auto}
+.ico svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:20px 18px;position:relative;overflow:hidden}
+.kpi .v{font-size:38px;font-weight:800;letter-spacing:-1px;color:var(--primary);line-height:1}
+.kpi .k{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.75}
+.kpi.g .v{color:var(--success)}
+.kpi.w .v{color:var(--warn)}
+.kpi.n .v{color:#42505f}
+.kpi::after{content:"";position:absolute;inset:auto 0 0 0;height:3px;background:var(--primary);opacity:.7}
+.kpi.g::after{background:var(--success)}
+.kpi.w::after{background:#d9a520}
+.kpi.n::after{background:#9aa7b5}
+table{width:100%;border-collapse:collapse}
+th{background:#fafbfd;color:#758293;font-size:11.5px;text-align:right;padding:10px 13px;font-weight:700;border-bottom:1px solid var(--line)}
+td{padding:11px 13px;font-size:12.7px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.75;color:#3c4a59}
+tr:last-child td{border-bottom:0}
+.tbl{background:#fff;border:1px solid var(--line);border-radius:15px;overflow:hidden}
+.tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:700}
+.tag.ok{background:var(--success-soft);color:var(--success)}
+.tag.mid{background:var(--warn-soft);color:var(--warn)}
+.tag.info{background:var(--primary-soft);color:var(--primary)}
+.flow{display:flex;align-items:stretch;gap:0}
+.flow .step{flex:1;background:#fff;border:1px solid var(--line);border-radius:13px;padding:13px 12px;min-width:0}
+.flow .step .n{width:25px;height:25px;border-radius:8px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:800;font-size:11.5px;margin-bottom:8px}
+.flow .step strong{display:block;font-size:13px;margin-bottom:4px;line-height:1.5}
+.flow .step span{font-size:11.3px;color:var(--muted);line-height:1.8;display:block}
+.flow .sep{width:20px;display:grid;place-items:center;color:#b7c2cd;flex:0 0 auto;font-size:12px}
+.states{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.state{padding:8px 15px;border-radius:11px;font-size:12.5px;font-weight:700;border:1px solid transparent}
+.s-planned{background:#f2f4f7;color:#667585;border-color:#e3e7ec}
+.s-available{background:var(--primary-soft);color:var(--primary);border-color:#cfe0ff}
+.s-boarding{background:var(--warn-soft);color:#a26900;border-color:#ffe6ad}
+.s-completed{background:var(--success-soft);color:var(--success);border-color:#c3ecd9}
+.s-transferred{background:#eaf7fb;color:#06768d;border-color:#c4e6ef}
+.s-review{background:var(--danger-soft);color:var(--danger);border-color:#ffd4da}
+.arrow{color:#b7c2cd;font-weight:700}
+.diag{border:1px solid var(--line);background:#fff;border-radius:15px;padding:18px 20px;display:grid;gap:11px}
+.lane{display:grid;grid-template-columns:165px 1fr;align-items:center;gap:14px}
+.lane .lbl{font-size:12.5px;font-weight:800;color:#42505f;text-align:center;background:#f7f9fb;border:1px solid var(--line);border-radius:10px;padding:10px 6px;line-height:1.6}
+.lane .lbl span{display:block;font-weight:500;font-size:10.5px;color:var(--muted)}
+.nodes{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.node{background:#fff;border:1.5px solid var(--primary);color:var(--primary);border-radius:10px;padding:8px 13px;font-size:12px;font-weight:700}
+.node.g{border-color:var(--success);color:var(--success)}
+.node.s{border-color:#d5dce4;color:#57646f}
+.node.soft{background:#f7f9fb;border-color:#e3e9f0;color:#5b6775;font-weight:600}
+.ln{color:#b7c2cd;font-weight:700;font-size:11px}
+.risk{border:1px solid var(--line);border-radius:15px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.risk .hd{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--danger-soft);border-bottom:1px solid #ffd4da}
+.risk .hd b{font-size:14px;color:#b62d42;line-height:1.5}
+.risk .bd{padding:14px 16px;display:flex;flex-direction:column;gap:9px;flex:1}
+.risk .bd p{font-size:12.3px;color:#4d5c6e;line-height:1.85}
+.risk .bd .fix{background:#f7f9fb;border:1px dashed #cfd9e4;border-radius:10px;padding:10px 12px;font-size:12.1px;color:#42505f;line-height:1.8}
+.risk .bd .fix b{color:var(--success)}
+.mono{font-family:Consolas,"Courier New",monospace;direction:ltr;unicode-bidi:embed;display:inline-block;font-size:11.5px;background:#f2f4f7;padding:2px 6px;border-radius:5px;color:#33414f}
+.bar{height:8px;border-radius:999px;background:#eef1f5;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;border-radius:999px;background:var(--primary)}
+.bar.g i{background:var(--success)}
+.bar.w i{background:#d9a520}
+.bar.n i{background:#9aa7b5}
+.quote{background:linear-gradient(135deg,var(--primary),#2f86e8);color:#fff;border-radius:18px;padding:26px 32px;font-size:20px;line-height:1.85;font-weight:700;position:relative;overflow:hidden}
+.quote small{display:block;font-size:13.5px;font-weight:500;opacity:.92;margin-top:11px;line-height:1.85}
+.quote::after{content:"";position:absolute;left:-50px;top:-50px;width:210px;height:210px;border-radius:50%;background:rgba(255,255,255,.08)}
+.asks{display:grid;gap:11px}
+.ask{background:#fff;border:1px solid var(--line);border-right:4px solid var(--primary);border-radius:13px;padding:15px 19px;display:grid;grid-template-columns:1fr 140px;gap:16px;align-items:center}
+.ask h4{font-size:14.5px;margin-bottom:4px;line-height:1.6}
+.ask p{font-size:12.4px;color:var(--muted);line-height:1.8}
+.ask .who{font-size:11px;color:#42505f;text-align:center;background:#f7f9fb;border:1px solid var(--line);border-radius:10px;padding:9px 7px;font-weight:700;line-height:1.7}
+.cover{background:radial-gradient(circle at 88% 12%,rgba(255,255,255,.14) 0,transparent 38%),linear-gradient(135deg,#0d3f86,#1769e0 58%,#2f8fe0)}
+.cover .inner{justify-content:center;padding:0 74px}
+.cover h1{font-size:50px;color:#fff;letter-spacing:-.8px}
+.cover .sub{font-size:18px;color:rgba(255,255,255,.9);margin-top:16px;line-height:1.9;max-width:780px}
+.cover .eyebrow{color:#9ec9ff}
+.cover .meta{position:absolute;bottom:54px;right:74px;display:flex;gap:9px;flex-wrap:wrap}
+.cover .chip{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;padding:9px 15px;border-radius:999px;font-size:12px;font-weight:700}
+.cover .stamp{position:absolute;bottom:54px;left:74px;color:rgba(255,255,255,.78);font-size:12px;line-height:1.9;text-align:left}
+.hud{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);padding:8px 14px;border-radius:999px;color:#fff;font-size:11.5px;z-index:50;opacity:.25;transition:opacity .25s}
+.hud:hover{opacity:1}
+.hud button{background:rgba(255,255,255,.16);border:0;color:#fff;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:15px;line-height:1}
+.hud button:hover{background:rgba(255,255,255,.32)}
+.hud .prog{width:110px;height:4px;background:rgba(255,255,255,.22);border-radius:999px;overflow:hidden}
+.hud .prog i{display:block;height:100%;background:#fff;border-radius:999px;transition:width .28s}
+@media print{
+  @page{size:1280px 720px;margin:0}
+  body{background:#fff;overflow:visible}
+  .deck{height:auto;display:block}
+  .slide{position:relative;opacity:1!important;visibility:visible!important;transform:none!important;width:1280px;height:720px;box-shadow:none;page-break-after:always;break-after:page;border-radius:0}
+  .hud{display:none!important}
+}
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+<section class="slide">
+  <div class="inner cover">
+    <div class="eyebrow">DRIVER TRANSPORT SYSTEM · V1.0.1</div>
+    <h1>نظام إدارة رحلات السائقين</h1>
+    <p class="sub">من التخطيط على الورق إلى رحلة موثّقة رقمياً تُقاس كل دقيقة: 14 باصاً، وأكثر من ألف موظف، ستة مواقع عمل.</p>
+    <div class="meta">
+      <span class="chip">عرض الإدارة العليا</span>
+      <span class="chip">القرار المطلوب: أربعة قرارات اليوم</span>
+    </div>
+    <div class="stamp">إعداد: فريق تقنية المعلومات<br>الحالة: العمل التقني منجز — بانتظار قرار الاعتماد</div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">EXECUTIVE SUMMARY</div>
+      <h2>الملخص التنفيذي</h2>
+      <p class="lead">أنجزنا نظاماً متكاملاً يلغي الورق في رحلة السائق، ويعمل داخل المناطق الميتة بلا إنترنت. المطلوب اليوم قرار واضح، ومراعاة مبلغ محدود لتصحيح الأمان.</p>
+    </div>
+    <div class="grid g3" style="margin-bottom:15px">
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></span>ما تم إنجازه</h3>
+        <ul>
+          <li>واجهة سائق كاملة: أربع شاشات تشغيل</li>
+          <li>واجهة مشرف: أحد عشر قسماً تشغيلياً وإعدادات</li>
+          <li>عمل كامل دون إنترنت مع مزامنة لاحقة</li>
+          <li>ربط جاهز مع Microsoft Power Automate</li>
+          <li>نسخة أندرويد جاهزة للتركيب على أجهزة السائقين</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3><span class="ico" style="background:var(--success-soft);color:var(--success)"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>ما يكسبه التشغيل</h3>
+        <ul>
+          <li>كل موظف مسجّل بالاسم والكود ووقت الصعود</li>
+          <li>لا نسخة ورقية تضيع عند التلف أو العطل</li>
+          <li>تقرير مكتمل للمشرف خلال دقيقة من نهاية الرحلة</li>
+          <li>تتبّع كامل: من قد، ومتى، وبأي باص، ومع من</li>
+          <li>مصدر واحد للحقيقة بدل خمسة مصادر متفرقة</li>
+        </ul>
+      </div>
+      <div class="card" style="border-color:#ffd4da;background:#fffafb">
+        <h3><span class="ico" style="background:var(--danger-soft);color:var(--danger)"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 001.7 3h16.6A2 2 0 0022 18L13.7 3.9a2 2 0 00-3.4 0z"/></svg></span>ما يجب حسمه</h3>
+        <ul>
+          <li>لا يُنشر قبل معالجة ثلاثة عوائق تقنية مُثبتة</li>
+          <li>المدة التقديرية للتصحيح: أربعة أسابيع</li>
+          <li>يجب تعيين مالك النظام ومشرف النظام بالاسم</li>
+        </ul>
+      </div>
+    </div>
+    <div class="quote">القرار المطلوب اليوم: اعتماد التشغيل، وتخصيص أسبوعين للتصحيح، وتعيين المسؤولية، واعتماد التدريب.<small>العمل التقني منجز بالكامل. يبقى قرار التشغيل والمصاحبة.</small></div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>2</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">THE PROBLEM</div>
+      <h2>لماذا لا يكفي الوضع الحالي؟</h2>
+      <p class="lead">المشكلة ليست نقص بيانات، بل غياب مصدر واحد موثوق للحقيقة. كل سجل مبعثر بين كشك السائق ودفتر الورق وملف الجداول وذاكرة المشرف.</p>
+    </div>
+    <div class="grid g2" style="gap:18px">
+      <div class="card" style="border-color:#ffd4da">
+        <h3 style="color:#b62d42">المخاطر القائمة اليوم</h3>
+        <table style="margin-top:8px">
+          <tr><th style="width:44%">الخطر</th><th>الأثر على الوضع القائم</th></tr>
+          <tr><td><b>فقدان السجلات</b></td><td>لا يوجد دليل عند الاعتراض على التوصيل أو الاستلام</td></tr>
+          <tr><td><b>التسجيل بالذاكرة</b></td><td>خطأ بشري في عدد المسافرين وفي الأكواد</td></tr>
+          <tr><td><b>زمن التجميع</b></td><td>من ساعات إلى أيام لتجهيز تقرير رحلة واحدة</td></tr>
+          <tr><td><b>غياب التتبّع</b></td><td>لا يمكن إثبات وقت المغادرة الفعلي</td></tr>
+          <tr><td><b>لا استمرارية</b></td><td>انقطاع الخدمة يعني توقف النظام كلياً</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>ما الذي يغيّره النظام</h3>
+        <ul style="margin-top:8px">
+          <li><b>مصدر حقيقة واحد</b>: تُسجَّل الرحلة مرة واحدة على جهاز السائق، وتنتقل تلقائياً إلى النظام عند توفّر الشبكة بلا إعادة إدخال.</li>
+          <li><b>استمرارية الخدمة</b>: انقطاع الإنترنت لا يوقف تسجيل الرحلة، لأن التطبيق يعمل محلياً ويحفظ كل حركة فوراً.</li>
+          <li><b>دقة بالتصميم</b>: منع تكرار الكود داخل الرحلة نفسها، ووضع علامة «تحتاج مراجعة» على أي كود غير معروف.</li>
+          <li><b>شفافية إشرافية</b>: المشرف يرى الرحلات المكتملة وعدد الصاعدين وحالة الإرسال في شاشة واحدة.</li>
+          <li><b>تتبّع زمني</b>: وقت بدء كل موظف لحظة صعوده، لا تقديراً لاحقاً من الذاكرة.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="quote" style="margin-top:18px;padding:20px 28px;font-size:18px">الدقة في النقل التزامٌ تشغيلي وأمان، لا رفاهية إدارية.<small>كل رقم يُسجَّل في النظام دليلٌ يمكن الاعتماد عليه أمام المراجع.</small></div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>3</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">THE SOLUTION</div>
+      <h2>الحل في جملة واحدة</h2>
+    </div>
+    <div class="card" style="border:2px solid var(--primary);background:linear-gradient(180deg,#fff,#f7fbff);padding:26px 30px;margin-bottom:18px">
+      <h3 style="font-size:19px;line-height:1.95">نظام يعمل أولاً على جهاز السائق، فيسجّل الرحلة كاملة أثناء الطريق دون إنترنت، ثم يرسلها تلقائياً إلى الخادم ومركز التحكم فور توفّر الشبكة.</h3>
+    </div>
+    <div class="grid g4">
+      <div class="card"><h3><span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/></svg></span>الواجهة</h3><p>تطبيق أندرويد وتطبيق ويب، عربي بالكامل، بأزرار قليلة واضحة في المسار الأهم.</p></div>
+      <div class="card"><h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>قاعدة البيانات</h3><p>PostgreSQL مُدار على Supabase: ستة عشر جدولاً تغطي السائقين والباصات والخطوط والموظفين والرحلات وسجل التدقيق.</p></div>
+      <div class="card"><h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/><path d="M4 10h16"/></svg></span>الخادم</h3><p>خدمة FastAPI بتشفير كلمات المرور وجلسات محدّدة المدة وحدّ على محاولات الدخول.</p></div>
+      <div class="card"><h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H7l-3 3z"/></svg></span>التكامل</h3><p>إرسال تقرير الرحلة المكتملة إلى Microsoft Power Automate، واستقبال الرحلات المخططة آلياً.</p></div>
+    </div>
+    <div class="grid g3" style="margin-top:15px">
+      <div class="card"><h3 style="color:var(--success)">يعمل دون إنترنت</h3><p>البيانات الأساسية مخزّنة داخل التطبيق، فتستمر رحلة التسجيل كاملة في المناطق الميتة.</p></div>
+      <div class="card"><h3 style="color:var(--success)">لا يفقد أي تسجيل</h3><p>ما سُجّل يبقى محفوظاً على الجهاز، ويُعاد إرساله تلقائياً عند عودة الاتصال.</p></div>
+      <div class="card"><h3 style="color:var(--success)">مخرجات جاهزة</h3><p>تصدير جداول، وطباعة ملف PDF، ومشاركة عبر واتساب، دون خطوات إضافية.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>4</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">ARCHITECTURE</div>
+      <h2>البنية التقنية — من الرحلة إلى مركز التحكم</h2>
+    </div>
+    <div class="diag">
+      <div class="lane">
+        <div class="lbl">أولاً: جهاز السائق<span>يعمل محلياً</span></div>
+        <div class="nodes">
+          <span class="node">دخول أو رمز محلي</span><span class="ln">←</span>
+          <span class="node">بدء الرحلة</span><span class="ln">←</span>
+          <span class="node">تسجيل أكواد الصعود</span><span class="ln">←</span>
+          <span class="node">إكمال وإرسال</span>
+          <span class="node soft">تطبيق أندرويد أو متصفح</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lbl">ثانياً: النقل الآمن<span>عند توفّر الشبكة</span></div>
+        <div class="nodes">
+          <span class="node">مزامنة تراكمية</span><span class="ln">←</span>
+          <span class="node s">اتصال مشفّر</span><span class="ln">←</span>
+          <span class="node g">خدمة الخادم</span>
+          <span class="node soft">تسجيل: من أرسل، ومتى، وماذا</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lbl">ثالثاً: مركز البيانات<span>مصدر الحقيقة</span></div>
+        <div class="nodes">
+          <span class="node g">قاعدة بيانات مُدارة</span><span class="ln">←</span>
+          <span class="node s">سجل التدقيق</span>
+          <span class="node soft">نسخ احتياطي يومي</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lbl">رابعاً: الاستهلاك<span>من القرار إلى التقرير</span></div>
+        <div class="nodes">
+          <span class="node">لوحة إشراف المشرف</span><span class="ln">←</span>
+          <span class="node g">Microsoft Power Automate</span><span class="ln">←</span>
+          <span class="node s">تقارير الشركة</span>
+        </div>
+      </div>
+    </div>
+    <div class="grid g3" style="margin-top:15px">
+      <div class="card"><h3>تقنيات معتمدة</h3><p>Python وFastAPI في الخادم، وNext.js مع TypeScript في الواجهة، وCapacitor لأندرويد، وRender للاستضافة.</p></div>
+      <div class="card"><h3>لماذا هذه التقنيات؟</h3><p>مفتوحة المصدر وبلا تراخيص سنوية، ومجتمع نشط حولها يضمن بقاء من يساند النظام. لا احتكار لمورّد ولا تكلفة تراخيص متزايدة.</p></div>
+      <div class="card"><h3>ملكية البيانات</h3><p>البيانات ملككم بالكامل في حسابكم المُدار، مع تصدير كامل متاح، ولا تبعية لمورّد خارجي.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>5</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">TRIP LIFECYCLE</div>
+      <h2>دورة حياة الرحلة — الحالات</h2>
+      <p class="lead">كل رحلة تنتقل بين حالات محددة ولا تقفز حالة. هذا ما يجعل التقرير النهائي قابلاً للاعتماد.</p>
+    </div>
+    <div class="card" style="padding:22px 24px;margin-bottom:15px">
+      <div class="states">
+        <span class="state s-planned">مخططة</span><span class="arrow">←</span>
+        <span class="state s-available">متاحة</span><span class="arrow">←</span>
+        <span class="state s-available">بدأت</span><span class="arrow">←</span>
+        <span class="state s-boarding">صعود الموظفين</span><span class="arrow">←</span>
+        <span class="state s-completed">مكتملة</span><span class="arrow">←</span>
+        <span class="state s-transferred">مرحّلة</span><span class="arrow">←</span>
+        <span class="state s-transferred">مستلمة</span>
+      </div>
+      <div class="grid g3" style="margin-top:16px">
+        <div><b style="font-size:12.7px">مخططة</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px">أنشأها المشرف، ولم يحن وقت إتاحتها بعد.</p></div>
+        <div><b style="font-size:12.7px">متاحة</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px">حلّ وقت الإتاحة، فظهرت في الرحلات المخططة على جهاز السائق.</p></div>
+        <div><b style="font-size:12.7px">بدأت</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px">ضغط السائق بدء الرحلة، فسُجّلت باسمه وباصه الفعلي.</p></div>
+        <div><b style="font-size:12.7px">صعود الموظفين</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px">بدأ السائق التسجيل، وهي الحالة الوحيدة التي تقبل إضافة الأكواد.</p></div>
+        <div><b style="font-size:12.7px">مكتملة</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px">أكد السائق الوصول، فصارت قابلة للإرسال إلى النظام.</p></div>
+        <div><b style="font-size:12.7px">مرحّلة</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px">وصلت بنجاح إلى تقارير الشركة، فلا تُسجّل مرتين ولا تضيع.</p></div>
+        <div><b style="font-size:12.7px">حالات استثنائية</b><p style="font-size:12px;color:var(--muted);line-height:1.8;margin-top:3px"><span class="state s-review" style="padding:2px 8px;font-size:11px">تحتاج مراجعة</span> <span class="state s-planned" style="padding:2px 8px;font-size:11px">ملغاة</span> تُراجَع ولا تُهمل.</p></div>
+      </div>
+    </div>
+    <div class="grid g2">
+      <div class="card"><h3 style="color:var(--primary)">صيغة رقم الرحلة: معيار واحد لكل التقارير</h3><p style="margin-top:6px"><span class="mono">TR-124-20260919-YCSR-001</span><br>رقم الباص، ثم التاريخ، ثم كود الشركة، ثم التسلسل.</p><p style="margin-top:7px;color:var(--success);font-weight:700">الرقم فريد، فيُستخدم كمرجع واحد بين السائق والمشرف والتقارير.</p></div>
+      <div class="card"><h3 style="color:var(--primary)">نقطة الإتاحة: متى تظهر الرحلة للسائق؟</h3><p style="margin-top:6px">يحدد المشرف نافذة الإتاحة عند التخطيط: فوراً، أو ساعتان، أو 4 ساعات، أو 8 ساعات قبل موعد الانطلاق.</p><p style="margin-top:7px">مثال: موعد الانطلاق في الخامسة والنصف صباحاً بإتاحة 8 ساعات، فتظهر الرحلة الساعة <b>التاسعة والنصف مساءً في اليوم السابق</b>.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>6</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">HOW IT WORKS</div>
+      <h2>كيف تُسجَّل الرحلة فعلياً — سبع خطوات</h2>
+      <p class="lead">هذه هي العملية التي يتقنها السائق. لا يوجد في المسار الأهم أي خطوة تقنية معقدة.</p>
+    </div>
+    <div class="flow">
+      <div class="step"><div class="n">1</div><strong>تسجيل الدخول</strong><span>اسم المستخدم وكلمة المرور. ودون شبكة: رمز محلي من أربعة أرقام.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">2</div><strong>اختيار الرحلة</strong><span>من الرحلات المخططة، ثم التفاصيل، ثم بدء. أو رحلة يدوية عند غياب التخطيط.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">3</div><strong>تأكيد البدء</strong><span>الباص الفعلي، عند الاستبدال فقط، لتوثيق الفرق عن الخطة.</span></div>
+    </div>
+    <div class="flow" style="margin-top:13px">
+      <div class="step"><div class="n">4</div><strong>تسجيل الصاعدين</strong><span>كود الموظف ثم زر إضافة، مع رسالة فورية بالنتيجة.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">5</div><strong>ركّاب من خارج الموظفين</strong><span>الاسم، والجهة التي استدعته، والغرض، وتظهر للمشرف.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">6</div><strong>إكمال الرحلة</strong><span>عند الوصول للموقع النهائي، ويُثبَّت وقت الإكمال تلقائياً.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">7</div><strong>الإرسال</strong><span>تلقائياً عند توفّر الشبكة، أو يدوياً بزر الإرسال إلى النظام.</span></div>
+    </div>
+    <div class="grid g2" style="margin-top:17px">
+      <div class="card"><h3 style="color:var(--success)">ما يميز التصميم</h3><ul style="margin-top:7px">
+        <li>زر كبير واحد في المسار الأهم، فتقل الفهم والخطأ.</li>
+        <li>مؤشر حالة الاتصال ظاهر دائماً أعلى الشاشة.</li>
+        <li>لا يمكن إكمال الرحلة قبل تسجيل الصعود، ولا الإرسال قبل الإكمال.</li>
+        <li>رسالة تأكيد واضحة لكل إضافة، فلا صمت مربك.</li>
+      </ul></div>
+      <div class="card"><h3 style="color:var(--danger)">ثلاث حالات استثنائية تُضبط مسبقاً</h3><ul style="margin-top:7px">
+        <li><b>كود غير موجود في بيانات الجهاز</b>: يُسجَّل بعلامة «تحتاج تأكيد» ويظهر للمشرف، ولا يُرفض.</li>
+        <li><b>استبدال الباص</b>: يُدخل رقم الباص الفعلي عند بدء الرحلة ليظهر في التقرير.</li>
+        <li><b>انقطاع الشبكة طوال الرحلة</b>: الإرسال يتأخر ولا يضيع، ويظهر عدّاد بما لم يُرسل.</li>
+      </ul></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>7</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">OFFLINE-FIRST</div>
+      <h2>العمل دون إنترنت — ولماذا هو ليس رفاهية؟</h2>
+      <p class="lead">المناطق التي يغطيها خط النقل هي تحديداً المناطق التي يسقط فيها الإنترنت. لذلك بُني النظام ليسجّل أولاً ويرسل ثانياً.</p>
+    </div>
+    <div class="grid g2" style="gap:18px">
+      <div class="card">
+        <h3>كيف يعمل وضع انقطاع الشبكة</h3>
+        <ul style="margin-top:8px">
+          <li><b>البيانات الأساسية داخل التطبيق</b>: الموظفون والباصات والرحلات المخططة تُحمَّل مرة واحدة وتعمل دون خادم.</li>
+          <li><b>كل حركة تُحفظ فوراً</b>: كل كود يُكتب على الجهاز في اللحظة نفسها، لا في ذاكرة مؤقتة.</li>
+          <li><b>عدّاد انتظار ظاهر</b>: السائق يعرف دائماً كم رحلة لم تُرسل بعد.</li>
+          <li><b>إرسال عند عودة الشبكة</b>: تلقائياً، أو بضغطة واحدة، أو بتحديث الصفحة.</li>
+          <li><b>دخول برمز محلي</b>: أربعة أرقام خاصة بالجهاز، لا تُكتب في أي ورقة.</li>
+        </ul>
+      </div>
+      <div class="grid" style="gap:13px;align-content:start">
+        <div class="kpi g"><div class="v">صفر</div><div class="k">رحلة يتعذّر تسجيلها بسبب انقطاع الشبكة</div><div class="bar g"><i style="width:100%"></i></div></div>
+        <div class="kpi"><div class="v">مرة</div><div class="k">اتصال بالشبكة كافٍ لتحميل البيانات، ثم يعمل التطبيق مستقلاً عنه</div><div class="bar"><i style="width:10%"></i></div></div>
+        <div class="kpi n"><div class="v">4 أرقام</div><div class="k">الرمز المحلي وحده يفتح التطبيق دون شبكة، ولا يُحفظ في أي مكان آخر</div><div class="bar n"><i style="width:100%"></i></div></div>
+      </div>
+    </div>
+    <div class="quote" style="margin-top:17px;padding:19px 26px;font-size:17px">ضمان استمرارية الخدمة: التطبيق لا يتوقف لأن الشبكة اختفت، لأنه لا يحتاجها أثناء القيادة.<small>الشبكة تصبح قناة الإرسال فقط، وليست شرطاً للعمل.</small></div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>8</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">TWO INTERFACES</div>
+      <h2>لوحتان منفصلتان: للسائق وللمشرف</h2>
+    </div>
+    <div class="grid g2" style="gap:20px">
+      <div class="card" style="border-top:4px solid var(--primary);padding-top:16px">
+        <h3 style="font-size:18px">واجهة السائق — أربع شاشات</h3>
+        <table style="margin-top:9px">
+          <tr><th>الشاشة</th><th>ماذا يفعل فيها</th></tr>
+          <tr><td><b>لوحة القيادة</b></td><td>أربعة مؤشرات، الرحلة الحالية، الرحلات القادمة، بدء رحلة، وزر إرسال المعلّق</td></tr>
+          <tr><td><b>الرحلات المخططة</b></td><td>جدول الرحلات، ثم التفاصيل، ثم بدء الرحلة</td></tr>
+          <tr><td><b>صفحة الرحلة</b></td><td>إضافة الأكواد، عرض الصاعدين، الإكمال، الإرسال، والتصدير</td></tr>
+          <tr><td><b>سجل الرحلات</b></td><td>كل الرحلات المسجلة على الجهاز مع حالتها</td></tr>
+        </table>
+        <p style="margin-top:10px;font-size:12.3px;color:var(--muted)">السائق لا يرى إلا بياناته ورحلاته وقائمة الموظفين للبحث بالأكواد.</p>
+      </div>
+      <div class="card" style="border-top:4px solid var(--success);padding-top:16px">
+        <h3 style="font-size:18px">واجهة المشرف — أحد عشر قسماً</h3>
+        <table style="margin-top:9px">
+          <tr><th>القسم</th><th>ماذا يفعل فيه</th></tr>
+          <tr><td><b>تخطيط رحلة</b></td><td>تحديد السائق والباص والخط والموعد ونافذة الإتاحة</td></tr>
+          <tr><td><b>الرحلات المخططة</b></td><td>متابعة كل الرحلات وحالاتها</td></tr>
+          <tr><td><b>السائقون</b></td><td>إنشاء الحسابات وتعديلها وتعطيلها</td></tr>
+          <tr><td><b>الموظفون</b></td><td>استيراد أكثر من ألف موظف دفعة واحدة، أو إضافة يدوية</td></tr>
+          <tr><td><b>الباصات والخطوط</b></td><td>إدارة الأسطول وخطوط السير</td></tr>
+          <tr><td><b>القوائم المرجعية</b></td><td>الشركات والإدارات والوظائف والسكن</td></tr>
+          <tr><td><b>طلبات الموظفين الجدد</b></td><td>اعتماد الطلب أو رفضه</td></tr>
+          <tr><td><b>رحلات السائقين</b></td><td>تقرير الرحلات المكتملة مع تصدير جداول</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="grid g3" style="margin-top:15px">
+      <div class="card"><h3>فصل الصلاحيات</h3><p>السائق لا يرى ولا يعدّل بيانات غيره، والمشرف يدير دون أن يشغّل رحلة باسم سائق.</p></div>
+      <div class="card"><h3>استيراد الموظفين</h3><p>ملف جداول واحد بالصيغة المعتمدة يُحدّث قاعدة البيانات كاملة، بلا إدخال يدوي لألف موظف.</p></div>
+      <div class="card"><h3>حلقة المراجعة</h3><p>ما لم يكن مؤكداً في النظام يُعلَّم «تحتاج مراجعة»، فلا يمر قرار خاطئ في صمت.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>9</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">INTEGRATION &amp; AUDIT</div>
+      <h2>التكامل مع Microsoft وسجل التدقيق</h2>
+    </div>
+    <div class="grid g2" style="gap:20px">
+      <div class="card">
+        <h3>ما الذي يصل إلى Microsoft؟</h3>
+        <p>عند إكمال السائق الرحلة وإرسالها، تصل وثيقة واحدة منظّمة تحتوي:</p>
+        <table style="margin-top:9px">
+          <tr><th>الحقل</th><th>مثال</th></tr>
+          <tr><td>رقم الرحلة</td><td><span class="mono">TR-124-20260919-YCSR-001</span></td></tr>
+          <tr><td>السائق والباص والخط</td><td>سائق واحد، باص 124، من الحديدة إلى الشركة</td></tr>
+          <tr><td>نوع الرحلة</td><td>مغادر، أي من الشركة إلى مواقع العمل</td></tr>
+          <tr><td>الأوقات</td><td>موعد الانطلاق، ووقت البدء، ووقت الإكمال</td></tr>
+          <tr><td>عدد الصاعدين</td><td>ثمانية وثلاثون</td></tr>
+          <tr><td>قائمة الموظفين</td><td>الكود والاسم والوظيفة والإدارة والشركة والسكن ووقت الصعود وحالة التحقق</td></tr>
+        </table>
+        <p style="margin-top:9px;color:var(--muted);font-size:12.2px">الاتجاه العكسي متاح أيضاً: استقبال الرحلات المخططة آلياً عبر نقطة تكامل محمية بمفتاح.</p>
+      </div>
+      <div class="grid" style="gap:13px;align-content:start">
+        <div class="card" style="background:linear-gradient(180deg,#fff,#f7fbff)">
+          <h3 style="color:var(--primary)">سجل التدقيق: من فعل ماذا ومتى</h3>
+          <p>كل عملية حساسة تُسجّل: المستخدم، والإجراء، والكيان، والتفاصيل، والوقت، في جدول مستقل لا يُعدَّل من الواجهة.</p>
+        </div>
+        <div class="card">
+          <h3>لماذا هذا مهم أمام المراجع؟</h3>
+          <ul style="margin-top:7px">
+            <li>إثبات أن الرحلة نُفِّذت فعلاً وبالباص المخصص.</li>
+            <li>تحديد المسؤولية بدقة عند أي اعتراض أو حادث.</li>
+            <li>تتبّع من عدّل بيانات أي موظف ومتى.</li>
+            <li>أساس جاهز لأي مطابقة أو تدقيق لاحق.</li>
+          </ul>
+        </div>
+        <div class="card" style="background:var(--warn-soft);border-color:#ffe6ad">
+          <h3 style="color:var(--warn)">قاعدة إلزامية</h3>
+          <p style="color:#7a5a00">لا تُستخدم حسابات التجربة في التشغيل الفعلي، ويُفرض تغيير كلمة المرور تلقائياً عند أول دخول بأي حساب يحمل كلمة مرور افتراضية.</p>
+        </div>
+      </div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>10</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">KEY PERFORMANCE INDICATORS</div>
+      <h2>مؤشرات الأداء: نقيس الأثر لا الوعد</h2>
+      <p class="lead">المقارنة بين الوضع اليدوي الحالي والمستهدف بعد تسعين يوماً من التشغيل. تُقاس هذه المؤشرات آلياً من بيانات النظام نفسها.</p>
+    </div>
+    <div class="grid g4" style="margin-bottom:16px">
+      <div class="kpi"><div class="v">60 ثانية</div><div class="k">زمن تسجيل الرحلة في النظام بعد إنهائها</div><div class="bar"><i style="width:92%"></i></div></div>
+      <div class="kpi g"><div class="v">98%</div><div class="k">نسبة الرحلات الموثقة رقمياً فأعلى</div><div class="bar g"><i style="width:98%"></i></div></div>
+      <div class="kpi g"><div class="v">99%</div><div class="k">دقة مطابقة عدد الصاعدين مع الواقع</div><div class="bar g"><i style="width:99%"></i></div></div>
+      <div class="kpi w"><div class="v">صفر</div><div class="k">رحلات موثقة لا تصل إلى المشرف</div><div class="bar w"><i style="width:100%"></i></div></div>
+    </div>
+    <div class="tbl">
+      <table>
+        <tr><th style="width:23%">المؤشر</th><th style="width:20%">الوضع الحالي</th><th style="width:19%">بعد 30 يوماً</th><th style="width:19%">بعد 90 يوماً</th><th>كيف يُقاس</th></tr>
+        <tr><td><b>زمن إعداد تقرير رحلة</b></td><td>من ساعات إلى أيام</td><td>أقل من خمس دقائق</td><td>أقل من دقيقة</td><td>زمن استخراج التقرير من النظام</td></tr>
+        <tr><td><b>الرحلات الموثقة</b></td><td>غير مقاسة</td><td>سبعون بالمئة</td><td>ثمانية وتسعون بالمئة فأعلى</td><td>الرحلات المسجلة على إجمالي رحلات المشرف</td></tr>
+        <tr><td><b>معدل أخطاء الإدخال</b></td><td>مرتفع للتسجيل اليدوي</td><td>أقل من ثلاثة بالمئة</td><td>أقل من بالمئة</td><td>طلبات المراجعة والأكواد غير المعروفة</td></tr>
+        <tr><td><b>زمن الاستجابة للاعتراض</b></td><td>أيام</td><td>ساعات</td><td>دقائق</td><td>زمن استخراج سجل الرحلة عند الطلب</td></tr>
+        <tr><td><b>الزمن الإداري الموفّر</b></td><td>خط الأساس</td><td>عشرة بالمئة</td><td>عشرون بالمئة فأكثر</td><td>الزمن الموفّر على عدد الرحلات</td></tr>
+      </table>
+    </div>
+    <p style="font-size:12.2px;color:var(--muted);margin-top:11px">تُراجَع هذه المؤشرات أسبوعياً في أول شهرين عبر تقرير المشرف، ثم تثبت كلوحة أداء شهرية أمام الإدارة.</p>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>11</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">BUSINESS CASE</div>
+      <h2>العائد على الاستثمار</h2>
+      <p class="lead">الحساب بأقل تقدير متحفظ: عدد الرحلات اليومي، مضروباً في زمن التوفير في الرحلة الواحدة، مضروباً في أيام التشغيل.</p>
+    </div>
+    <div class="grid g2" style="gap:20px">
+      <div class="card">
+        <h3>مدخلات الحساب</h3>
+        <table style="margin-top:9px">
+          <tr><th>البند</th><th>القيمة</th></tr>
+          <tr><td>عدد الرحلات يومياً</td><td>ثلاثون رحلة، تقدير متحفظ</td></tr>
+          <tr><td>زمن التوفير في الرحلة الواحدة</td><td>اثنتا عشرة دقيقة للتجميع والمطابقة والنقل</td></tr>
+          <tr><td>أيام العمل في الشهر</td><td>ستة وعشرون يوماً</td></tr>
+          <tr><td>التوفير الشهري</td><td><b style="color:var(--success)">نحو مئة وستة وخمسين ساعة عمل</b></td></tr>
+          <tr><td>التكلفة السنوية</td><td>بنية تحتية مُدارة، بلا تراخيص برمجية سنوية</td></tr>
+        </table>
+      </div>
+      <div class="grid" style="gap:13px;align-content:start">
+        <div class="kpi g"><div class="v">156</div><div class="k">ساعة عمل تُسترد شهرياً من العمل الإداري المتكرر</div><div class="bar g"><i style="width:85%"></i></div></div>
+        <div class="kpi"><div class="v">1900</div><div class="k">ساعة عمل سنوياً، تعادل فريقاً إدارياً جزئياً</div><div class="bar"><i style="width:88%"></i></div></div>
+        <div class="card"><h3>التكلفة غير المباشرة للأوراق والوقت</h3><p>طباعة وإعادة ترقية، ومعالجة أخطاء، والرد على اعتراضات، ورحلات متكررة لاستعادة معلومة — بنود لا تظهر في الميزانية صراحة لكنها تتراكم.</p></div>
+        <div class="card" style="background:var(--primary-soft);border-color:#cfe0ff">
+          <h3 style="color:var(--primary2)">العائد غير المالي الأهم</h3>
+          <p style="color:#2a3b4d">الانتقال من حالة غير موثقة إلى توثيق كامل، وهو بالضبط ما تفحصه المراجعات الخارجية.</p>
+        </div>
+      </div>
+    </div>
+    <div class="quote" style="margin-top:15px;padding:19px 26px;font-size:17px">هذا ليس مشروعاً تقنياً، بل استبدال تكلفة تشغيل متكررة بحل رقمي دائم.<small>القيمة تتضخم كل شهر، بينما الكلفة ثابتة.</small></div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>12</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">READINESS</div>
+      <h2>حالة الجاهزية: أين نحن بصراحة؟</h2>
+      <p class="lead">هذا القسم موجود ليكون واضحاً معكم. ما أُنجز وما لم يُنجز بعد. لن نعرض نظاماً على أنه جاهز للتشغيل قبل أن يكون كذلك.</p>
+    </div>
+    <div class="grid g2" style="gap:20px">
+      <div class="card" style="border-top:4px solid var(--success)">
+        <h3 style="color:var(--success);font-size:17px">جاهز ومختبر</h3>
+        <ul style="margin-top:9px">
+          <li><b>واجهة السائق كاملة</b>: لوحة القيادة والرحلات المخططة وصفحة الرحلة والسجل والدليل.</li>
+          <li><b>واجهة المشرف كاملة</b>: أحد عشر قسماً وإعدادات وتصدير.</li>
+          <li><b>وضع انقطاع الشبكة</b>: منفّذ ومختبر، لا مجرد تصميم.</li>
+          <li><b>دورة حياة الرحلة</b>: الحالات والانتقالات بينها مفحوصة في الكود.</li>
+          <li><b>الأمان الأساسي</b>: تشفير كلمات المرور وجلسات محدّدة المدة وحدّ على المحاولات.</li>
+          <li><b>البيانات</b>: ألف وثمانية وتسعون موظفاً وأربعة عشر باصاً محمّلة ومجرّبة في الاستيراد والبحث.</li>
+          <li><b>نسخة أندرويد</b>: ملف تثبيت مبني وجاهز.</li>
+        </ul>
+      </div>
+      <div class="card" style="border-top:4px solid var(--warn)">
+        <h3 style="color:var(--warn);font-size:17px">يحتاج إكمالاً قبل التشغيل</h3>
+        <ul style="margin-top:9px">
+          <li><b>تصحيح إعداد النشر</b>: خدمة الواجهة على الاستضافة لا تقلع بالإعداد الحالي، ويحتاج تعديلاً واحداً.</li>
+          <li><b>إخفاء ملف البيانات المدمج</b>: نسخة من قاعدة الموظفين مُرفقة حالياً في ملفات النشر، ويجب إزالتها.</li>
+          <li><b>إجبار تغيير كلمة المرور</b>: عند إعادة تعيين كلمة مرور سائق يجب إلزامه بتغييرها.</li>
+          <li><b>اختبار التكامل الفعلي</b>: مسار الربط مُنفّذ لكنه لم يُختبر بحساب Microsoft حقيقي بعد.</li>
+          <li><b>رفع تغطية الاختبارات</b>: التغطية الحالية محدودة جداً مقارنة بعدد المسارات.</li>
+          <li><b>مراجعة أثر السلامة</b>: تقرير تقييم قبل التشغيل الميداني.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card" style="margin-top:15px;background:linear-gradient(90deg,#fff,#f7fbff);border:2px solid var(--primary);padding:18px 24px">
+      <h3 style="font-size:16px;color:var(--primary)">الحكم الهندسي الصريح</h3>
+      <p style="font-size:13.5px;line-height:1.95">النظام مكتمل وظيفياً وجاهز للتشغيل التجريبي المحدود، لكنه غير جاهز للتشغيل واسع النطاق قبل تصحيح العوائق الثلاثة الأولى. المدة التقديرية للتصحيح أربعة أسابيع بفريق من مطوّرين. هذه ليست مرحلة إضافية، بل شرط أساسي للمساءلة.</p>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>13</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">BLOCKERS</div>
+      <h2>الحواجز التقنية الثلاثة — بالتفصيل</h2>
+      <p class="lead">هذه نتائج فحص مباشر على الكود وملفات النشر، وليست تقديراً. لكل حاجز وقت إصلاح محدد.</p>
+    </div>
+    <div class="grid g3" style="gap:15px">
+      <div class="risk">
+        <div class="hd"><span class="pill r">حرج</span><b>الواجهة لا تقلع على الاستضافة</b></div>
+        <div class="bd">
+          <p><b>السبب:</b> إعداد تصدير الملفات الثابتة في الواجهة ينتج ملفات لا خادم، بينما أمر التشغيل المسجل في إعدادات النشر هو خادم التطبيق، وهو غير متوافق معه.</p>
+          <p><b>الأثر:</b> خدمة الواجهة لن تبدأ، فلا يُفتح التطبيق على أي جهاز.</p>
+          <div class="fix"><b>الإصلاح:</b> تعديل أمر تشغيل خدمة الملفات الثابتة. <b>يوم واحد</b>، وخطر شبه معدوم.</div>
+        </div>
+      </div>
+      <div class="risk">
+        <div class="hd"><span class="pill r">حرج</span><b>تسريب قاعدة بيانات الموظفين</b></div>
+        <div class="bd">
+          <p><b>السبب:</b> ملف بيانات مرفق في مجلد النشر العام بحجم 374 كيلوبايت، يحتوي على 1088 سجل موظف وأسماء خمسة حسابات، منها حساب المدير وحساب المشرف. وهو مُضمَّن أيضاً داخل ملف التطبيق على الهاتف.</p>
+          <p><b>الأثر:</b> أي شخص يملك رابط الموقع أو ملف التطبيق يقرأ البيانات بلا تسجيل دخول.</p>
+          <div class="fix"><b>الإصلاح:</b> حذف الملف من النشر وداخل التطبيق، وتقييد البيانات حسب الدور. <b>يوم واحد</b>.</div>
+        </div>
+      </div>
+      <div class="risk">
+        <div class="hd"><span class="pill r">حرج</span><b>كلمة مرور مؤقتة تبقى فعالة</b></div>
+        <div class="bd">
+          <p><b>السبب:</b> عند إعادة تعيين كلمة مرور سائق من لوحة الإدارة، يُضبط علم يجب التغيير على القيمة الخطأ.</p>
+          <p><b>الأثر:</b> كلمة مرور يعرفها المشرف قد تبقى فعالة للسائق بعد الإعادة، وهو خطر أمني مباشر.</p>
+          <div class="fix"><b>الإصلاح:</b> تصحيح قيمة واحدة مع اختبار. <b>نصف يوم</b>.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:15px;background:var(--success-soft);border-color:#c3ecd9">
+      <h3 style="color:var(--success)">رسالة إيجابية: العوائق الثلاثة قابلة للإغلاق في أقل من ثلاثة أيام عمل</h3>
+      <p style="color:#1a5c43">الحواجز التي تمنع إقلاع النظام أو تكشف بياناته تُغلق خلال يومين ونصف. بعدها يصبح النظام قابلاً للإطلاق التجريبي، وتبدأ مرحلة الاختبار الميداني والتدريب بالتوازي.</p>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>14</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">REMEDIATION PLAN</div>
+      <h2>خطة التصحيح — أربعة أسابيع</h2>
+      <p class="lead">خطة بمخرجات واضحة: كل أسبوع ينتهي بمخرَج قابل للتحقق، لا بوصف.</p>
+    </div>
+    <div class="tbl" style="margin-bottom:15px">
+      <table>
+        <tr><th style="width:10%">الأسبوع</th><th style="width:20%">المرحلة</th><th style="width:37%">المخرجات الملزمة</th><th style="width:17%">المالك</th><th>معيار الإنجاز</th></tr>
+        <tr><td><b>الأول</b></td><td>إغلاق العوائق الحرجة</td><td>إصلاح نشر الواجهة، وحذف ملف البيانات من النشر والتطبيق، وإجبار تغيير كلمة المرور</td><td>فريق التقنية</td><td>التطبيق يقلع على الإنترنت، وفحص البيانات ينجح</td></tr>
+        <tr><td><b>الثاني</b></td><td>التكامل والبيانات</td><td>ربط فعلي مع Microsoft، ومزامنة الرحلات المخططة، واختبار استيراد البيانات الحقيقي</td><td>التقنية والمشرف</td><td>رحلة تجريبية كاملة تصل إلى التقارير</td></tr>
+        <tr><td><b>الثالث</b></td><td>التدريب والتشغيل التجريبي</td><td>ثلاث جلسات تدريب، وتشغيل تجريبي مع ثلاثة سائقين، وتقرير نتائج اليوم الأول</td><td>مشرف النظام والتدريب</td><td>كل سائق يجتاز الاختبار العملي</td></tr>
+        <tr><td><b>الرابع</b></td><td>التوسع والتثبيت</td><td>التركيب على أجهزة كل السائقين، وتعميم الجداول، وأول لوحة مؤشرات أسبوعية</td><td>مشرف النظام والإدارة</td><td>تشغيل كامل مع أول تقرير أداء</td></tr>
+      </table>
+    </div>
+    <div class="grid g3">
+      <div class="card"><h3 style="color:var(--primary)">مبدأ التنفيذ</h3><p>لا ننتقل لمرحلة قبل اجتياز سابقها. التشغيل التجريبي بثلاثة سائقين يسبق التوسع، حتى لو أخطأ أحدهم يبقى الأثر محدوداً.</p></div>
+      <div class="card"><h3 style="color:var(--primary)">خطة التراجع</h3><p>يُحتفظ بالسجل الورقي في الأسبوع الأول فقط. إن ظهر خلل جوهري يُوقف النظام ويُعاد العمل بالورق خلال ساعة، فلا انقطاع للخدمة.</p></div>
+      <div class="card"><h3 style="color:var(--primary)">الدعم أثناء التشغيل</h3><p>نقطة اتصال واحدة للمشاكل وهي مشرف النظام، بزمن استجابة مستهدف خلال ثلاثين دقيقة في الدوام.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>15</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">GOVERNANCE</div>
+      <h2>من يملك ماذا — المسؤوليات</h2>
+      <p class="lead">الأنظمة تفشل حين لا يكون لها مالك. هذه المسؤوليات تُعتمد قبل الانطلاق.</p>
+    </div>
+    <div class="tbl" style="margin-bottom:15px">
+      <table>
+        <tr><th style="width:20%">الدور</th><th style="width:32%">المسؤوليات أثناء التشغيل</th><th style="width:24%">ما لا يفعله</th><th>مؤشر نجاحه</th></tr>
+        <tr><td><b>مالك النظام</b><br><span style="color:var(--muted);font-size:11px">مدير النقل أو من يكلَّف</span></td><td>اعتماد التخطيط، ومتابعة المؤشرات، واعتماد كود كل حساب جديد، والتصعيد</td><td>لا يدخل بيانات الرحلة بيده</td><td>تغطية كاملة للرحلات وتقرير أسبوعي</td></tr>
+        <tr><td><b>مشرف النظام</b><br><span style="color:var(--muted);font-size:11px">منفذ فني</span></td><td>إدارة الحسابات والباصات، واستيراد الموظفين، ومتابعة المعلّقات، والدعم الفني</td><td>لا يخطط الرحلات التشغيلية، فذلك عمل المشرف</td><td>صفر عناصر معلّقة تتجاوز أربعاً وعشرين ساعة</td></tr>
+        <tr><td><b>مشرف النقل</b><br><span style="color:var(--muted);font-size:11px">مستخدم النظام</span></td><td>تخطيط الرحلات، ومراجعة طلبات الموظفين الجدد، ومتابعة تقارير الرحلات</td><td>لا يدير المستخدمين ولا ينشئ حسابات</td><td>التخطيط قبل موعد الإتاحة دائماً</td></tr>
+        <tr><td><b>السائق</b></td><td>تسجيل الرحلة كاملة، والإرسال قبل نهاية الدوام، والإبلاغ عن أي خلل</td><td>لا يخطط رحلات ولا يدير بيانات</td><td>توثيق كامل ودقة في الأكواد</td></tr>
+        <tr><td><b>فريق التقنية</b></td><td>التصحيح والصيانة والنسخ الاحتياطي والتحديثات</td><td>لا يدخل بيانات تشغيلية</td><td>جاهزية الخدمة</td></tr>
+      </table>
+    </div>
+    <div class="grid g4">
+      <div class="card" style="background:var(--primary-soft);border-color:#cfe0ff"><h3 style="color:var(--primary2)">قاعدة التسمية</h3><p>كل حساب يُنشأ بكود الموظف الرسمي، بلا حسابات بأسماء شخصية ولا حسابات مشتركة بين أكثر من شخص.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">سياسة كلمات المرور</h3><p>لا تُشارك كلمة المرور بين سائقين. كل سائق مسؤول عن كل ما يُسجَّل باسمه، والرمز المحلي شخصي.</p></div>
+      <div class="card"><h3 style="color:var(--success)">تدوير الحسابات</h3><p>عند انتهاء عمل سائق يُعطَّل حسابه فوراً ولا يُحذف، للحفاظ على سجل رحلاته السابقة.</p></div>
+      <div class="card"><h3 style="color:var(--warn)">مراجعة دورية</h3><p>مراجعة شهرية لسجلات الدخول والعناصر المعلقة، للتأكد من عدم وجود حساب مهجور.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>16</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">ROADMAP</div>
+      <h2>الرؤية — من أداة تسجيل إلى منظومة نقل</h2>
+    </div>
+    <div class="flow">
+      <div class="step"><div class="n">الإصدار الأول</div><strong>التوثيق</strong><span>إلغاء الورق في تسجيل الرحلات. الحالة: جاهز بعد التصحيح.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">الإصدار الثاني</div><strong>التحليل</strong><span>لوحة مؤشرات: ذروة الطلب، أكثر الخطوط حركة، معدل الأخطاء، وأداء السائقين.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">الإصدار الثالث</div><strong>التخطيط المقترح</strong><span>اقتراح توزيع الرحلات على السائقين حسب الموقع والسعة وسجل التشغيل السابق.</span></div>
+      <div class="sep">◀</div>
+      <div class="step"><div class="n">الإصدار الرابع</div><strong>التوسع</strong><span>دعم أكثر من شركة، وتطبيق للركاب، وتكامل أعمق مع الأنظمة المالية.</span></div>
+    </div>
+    <div class="grid g3" style="margin-top:18px">
+      <div class="card" style="background:var(--primary-soft);border-color:#cfe0ff">
+        <h3 style="color:var(--primary2)">الهدف بعد ستة أشهر</h3>
+        <p>كل رحلة موثقة رقمياً بلا استثناء، وصفر سجل ورقي، وتقرير أداء أسبوعي يُقرأ في ثلاث دقائق.</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--success)">الهدف بعد اثني عشر شهراً</h3>
+        <p>تخطيط شبه آلي يقلل زمن التخطيط من ساعات إلى دقائق، مع تحسين توزيع الرحلات على الأسطول.</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--primary)">شرط النجاح</h3>
+        <p>أن يختصر التطبيق وقت المشرف فعلياً. النظام الذي يزيد على المستخدم العمل الإضافي لا يبقى.</p>
+      </div>
+    </div>
+    <div class="quote" style="margin-top:17px">نبدأ بالفوز في الصغير: رحلة واحدة موثقة بإتقان، أفضل من محاولة توثيق كل شيء إلى النصف.<small>بعدها يصبح التوسع قاعدة لا استثناء.</small></div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>17</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">THE ASK</div>
+      <h2>القرار المطلوب من الإدارة</h2>
+      <p class="lead">أربعة قرارات، وكلها متاحة خلال اجتماع اليوم. تأخير القرار يؤخر التوثيق كل يوم.</p>
+    </div>
+    <div class="asks" style="margin-bottom:15px">
+      <div class="ask">
+        <div><h4>أولاً: اعتماد الانتقال للتشغيل الرقمي لرحلات الموظفين</h4><p>اعتماد النظام كقناة التوثيق الرسمية لرحلات النقل، مع مرحلة انتقالية تجمع بين السجلين لأسبوع واحد فقط.</p></div>
+        <div class="who">قرار إداري<br><span style="color:var(--success)">اليوم</span></div>
+      </div>
+      <div class="ask">
+        <div><h4>ثانياً: تخصيص فريق التقنية لأسبوعين للتصحيح قبل أي نشر</h4><p>مطوّران لأسبوعين لإغلاق العوائق الحرجة الثلاثة وربط التكامل الفعلي. النشر قبل ذلك غير موصى به.</p></div>
+        <div class="who">قرار موارد<br><span style="color:var(--warn)">خلال أسبوع</span></div>
+      </div>
+      <div class="ask">
+        <div><h4>ثالثاً: تعيين مالك النظام ومشرف النظام بالاسم</h4><p>مالك النظام يعتمد ويتابعة، ومشرف النظام يدير يومياً. بدون ذلك يفشل أي نظام مهما كان جيداً تقنياً.</p></div>
+        <div class="who">قرار تنظيمي<br><span style="color:var(--warn)">خلال أسبوع</span></div>
+      </div>
+      <div class="ask">
+        <div><h4>رابعاً: اعتماد برنامج التدريب قبل التشغيل</h4><p>جلسة للسائقين تسعون دقيقة، وجلستان للمشرفين ساعتان، واختبار عملي إلزامي لكل مستخدم قبل منحه حساباً.</p></div>
+        <div class="who">قرار تنظيمي<br><span style="color:var(--primary)">قبل التشغيل</span></div>
+      </div>
+    </div>
+    <div class="quote">ما نطلبه اليوم ليس ميزانية كبيرة، بل قرار واضح وموارد محدودة ومخصّصة.<small>العمل التقني منجز. يبقى الاعتماد والتشغيل.</small></div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>18</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner">
+    <div class="slide-head">
+      <div class="eyebrow">QUESTIONS &amp; ANSWERS</div>
+      <h2>أسئلة متوقعة — وإجاباتها</h2>
+    </div>
+    <div class="grid g2" style="gap:12px">
+      <div class="card"><h3 style="color:var(--danger)">وجدنا عوائق تقنية، فلماذا نعرضه؟</h3><p>لأنها كانت معروفة وموثقة قبل هذا العرض. إخفاؤها يعني أن الإدارة ستكتشفها بعد الاعتماد. عرضها مع خطة إصلاحها ومدة إصلاحها هو القرار المسؤول. وأخطرها يحتاج يوماً واحداً.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">لماذا لا نستخدم نظاماً جاهزاً من السوق؟</h3><p>لأن الأنظمة الجاهزة لا تطابق واقعنا: أكواد الموظفين بصيغتنا، والمواقع الستة، ونوعي الرحلة قادم ومغادر، وتقارير Microsoft المخصصة. كما أن معظمها يضع بيانات موظفينا على خوادم طرف ثالث خارج سيادتنا.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">هل يعمل فعلاً بلا إنترنت؟</h3><p>نعم، وهذا تصميم أصيل لا إضافة: البيانات الأساسية داخل التطبيق، وكل حركة تُحفظ فوراً، والإرسال يتأخر دون أن يُفقد. ومؤشر حالة الاتصال ظاهر دائماً، مع عدّاد يذكّرك بما لم يُرسل.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">ماذا لو أخطأ السائق في كود موظف؟</h3><p>الكود لا يُرفض، بل يُسجَّل بعلامة تحتاج تأكيد ويظهر للمشرف. لأن رفض التسجيل قد يُسقط موظفاً حقيقياً من النقل. هكذا يتحوّل القرار إلى المشرف بدل السائق.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">من يستطيع تعديل بيانات الموظفين؟</h3><p>المشرف فقط، وكل تعديل مسجّل في سجل التدقيق مع الاسم والوقت. السائق لا يعدّل بيانات موظف، بل يضيفه إلى الرحلة. فصل الصلاحيات مطبَّق في الواجهة والخادم معاً.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">ماذا لو توقّف النظام كلياً؟</h3><p>البيانات محفوظة في قاعدة مُدارة بنسخ احتياطي يومي وخطة استرجاع. وأسوأ الحالات انقطاع الخادم، فيتأخر الإرسال يوماً واحداً دون فقدان بيانات أو تعطل النقل.</p></div>
+    </div>
+    <div class="foot"><span class="brand"><i class="dot"></i>نظام إدارة رحلات السائقين</span><span>19</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="inner cover">
+    <div class="eyebrow">NEXT STEP</div>
+    <h1>الخطوة التالية: قرار منكم</h1>
+    <p class="sub">العمل التقني جاهز. ينقصه قرار الاعتماد، ومسؤولية محددة، وبرنامج تدريب معتمد. نطلب هذه الأربعة اليوم لنبدأ التشغيل خلال أربعة أسابيع.</p>
+    <div class="meta">
+      <span class="chip">اعتماد التشغيل</span>
+      <span class="chip">أسبوعان للتصحيح</span>
+      <span class="chip">تعيين المالك والمشرف</span>
+      <span class="chip">اعتماد التدريب</span>
+    </div>
+    <div class="stamp">شكراً لوقتكم — مستعدون للأسئلة<br>فريق تقنية المعلومات · نظام إدارة رحلات السائقين</div>
+  </div>
+</section>
+
+</div>
+
+<div class="hud" id="hud">
+  <button id="prev" title="السابق">&#8250;</button>
+  <span id="count">1 / 20</span>
+  <div class="prog"><i id="bar" style="width:5%"></i></div>
+  <button id="next" title="التالي">&#8249;</button>
+  <span style="opacity:.75">الأسهم للتنقل · حرف F لملء الشاشة · حرف P للطباعة إلى ملف</span>
+</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var i = 0;
+  function show(n){
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function(s, k){ s.classList.toggle("active", k === i); });
+    document.getElementById("count").textContent = (i + 1) + " / " + slides.length;
+    document.getElementById("bar").style.width = ((i + 1) / slides.length * 100) + "%";
+    try { location.hash = "s" + (i + 1); } catch(e){}
+  }
+  document.getElementById("next").addEventListener("click", function(){ show(i + 1); });
+  document.getElementById("prev").addEventListener("click", function(){ show(i - 1); });
+  document.addEventListener("keydown", function(e){
+    var k = e.key;
+    if (k === "ArrowLeft" || k === "PageDown" || k === " " || k === "Enter") { e.preventDefault(); show(i + 1); }
+    else if (k === "ArrowRight" || k === "PageUp" || k === "Backspace") { e.preventDefault(); show(i - 1); }
+    else if (k === "Home") show(0);
+    else if (k === "End") show(slides.length - 1);
+    else if (k === "f" || k === "F") { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
+    else if (k === "p" || k === "P") window.print();
+  });
+  document.addEventListener("click", function(e){
+    if (e.target.closest("a,button,input,select,textarea")) return;
+    show(i + 1);
+  });
+  var m = /^#s(\d+)$/.exec(location.hash || "");
+  show(m ? parseInt(m[1], 10) - 1 : 0);
+  window.addEventListener("hashchange", function(){
+    var mm = /^#s(\d+)$/.exec(location.hash || "");
+    if (mm) show(parseInt(mm[1], 10) - 1);
+  });
+})();
+</script>
+</body>
+</html>

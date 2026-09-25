@@ -1,14 +1,14 @@
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.core.database import Base, SessionLocal, engine
+from app.core.database import Base, SessionLocal, engine, migrate_schema
 from app.core.security import hash_password
 from app.models import Bus, Employee, Route, User, UserRole, Company
 
-Base.metadata.create_all(bind=engine)
-db = SessionLocal()
-try:
+
+def run_seed(db: Session) -> None:
     company = db.scalar(select(Company).where(Company.code == "YCSR"))
     if not company:
         company = Company(code="YCSR", name="الشركة - YCSR")
@@ -43,6 +43,29 @@ try:
             db.add(Employee(employee_code=row[0], name=row[1], job_title=row[2], department_name=row[3], company_name=row[4], housing_location=row[5]))
 
     db.commit()
-    print("Seed complete")
-finally:
-    db.close()
+
+
+def seed_if_empty(db: Session) -> bool:
+    """Seed demo data only when the users table is still empty (fresh database).
+
+    Uses only the users table as the sentinel so it never clobbers real data
+    after a deployment. Returns True when seeding actually ran.
+    """
+    has_user = db.scalar(select(User.id).limit(1))
+    if has_user is not None:
+        return False
+    run_seed(db)
+    return True
+
+
+if __name__ == "__main__":
+    Base.metadata.create_all(bind=engine)
+    migrate_schema()
+    db = SessionLocal()
+    try:
+        if seed_if_empty(db):
+            print("Seed complete")
+        else:
+            print("Database already has users - seed skipped")
+    finally:
+        db.close()

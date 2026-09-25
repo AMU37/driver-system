@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "export",
+  distDir: "dist",
   allowedDevOrigins: ["localhost", "10.157.62.187"],
 };
 

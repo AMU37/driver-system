@@ -1,12 +1,16 @@
+import uuid
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_roles
+from app.core.config import settings
 from app.core.database import get_db
-from app.models import Employee, NewEmployeeRequest, Notification, PlannedTrip, Trip, TripEmployee, TripStatus, User, UserRole
+from app.models import Employee, NewEmployeeRequest, Notification, PlannedTrip, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
 from app.schemas import DashboardOut, EmployeeLookup, NewEmployeeCreate, NotificationOut, PlannedTripOut, TripDetail, TripEmployeeAdd, TripEmployeeOut, TripOut
 from app.integrations.microsoft import transfer_trip
 from app.services.trips import add_known_employee, add_new_employee, can_access_trip, complete_trip, serialize_trip, start_planned_trip
@@ -34,7 +38,8 @@ def planned_out(item: PlannedTrip) -> dict:
 
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard(user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
-    now = datetime.now(timezone.utc)
+    # DB stores naive UTC datetimes; use a naive UTC "now" for comparisons.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     planned = db.scalars(
         select(PlannedTrip).options(selectinload(PlannedTrip.bus), selectinload(PlannedTrip.route)).where(
             PlannedTrip.driver_id == user.id,
@@ -64,7 +69,7 @@ def dashboard(user: User = Depends(require_roles(UserRole.driver)), db: Session 
 @router.get("/planned", response_model=list[PlannedTripOut])
 def planned_trips(user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
     items = db.scalars(select(PlannedTrip).options(selectinload(PlannedTrip.bus), selectinload(PlannedTrip.route)).where(PlannedTrip.driver_id == user.id).order_by(PlannedTrip.scheduled_start_at.desc()).limit(100)).all()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     changed = False
     for item in items:
         if item.status == TripStatus.planned and item.release_at and now >= item.release_at:
@@ -131,6 +136,13 @@ def add_new(trip_id: int, payload: NewEmployeeCreate, user: User = Depends(requi
     return passenger
 
 
+@router.get("/employees", response_model=list[EmployeeLookup])
+def employees_list(user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
+    return db.scalars(
+        select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.employee_code)
+    ).all()
+
+
 @router.get("/employees/search", response_model=EmployeeLookup)
 def employee_search(code: str, user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
     employee = db.scalar(select(Employee).where(Employee.employee_code == code.strip(), Employee.is_active.is_(True)))
@@ -148,6 +160,49 @@ def complete(trip_id: int, user: User = Depends(require_roles(UserRole.driver)),
     db.commit()
     trip = db.scalar(select(Trip).options(selectinload(Trip.passengers), selectinload(Trip.actual_bus), selectinload(Trip.planned_bus), selectinload(Trip.route), selectinload(Trip.planned_trip)).where(Trip.id == trip.id))
     return serialize_trip(trip)
+
+
+class TripReportIn(BaseModel):
+    event_type: str = "trip.completed"
+    trip: dict = {}
+
+
+@router.post("/trips/report")
+def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
+    """تسليم نسخة الرحلة المكتملة للخادم حتى يراها المشرف، مع إعادة توجيهها لـ Power Automate إن ضُبط."""
+    data = payload.trip or {}
+    employees = data.get("employees") or []
+    report = TripReport(
+        driver_id=user.id,
+        driver_username=user.username,
+        driver_name=user.full_name,
+        trip_number=str(data.get("trip_id") or data.get("internal_id") or "UNKNOWN"),
+        employee_count=len(employees),
+        payload=payload.model_dump(),
+        integration_status="server_only",
+    )
+    forwarded = {"ok": True, "error": None}
+    if settings.microsoft_enabled and settings.microsoft_outbound_url:
+        try:
+            req_id = str(uuid.uuid4())
+            with httpx.Client(timeout=settings.microsoft_timeout_seconds) as client:
+                resp = client.post(
+                    settings.microsoft_outbound_url,
+                    headers={"Content-Type": "application/json", "X-Request-ID": req_id},
+                    json=payload.model_dump(),
+                )
+            if 200 <= resp.status_code < 300:
+                report.integration_status = "success"
+            else:
+                report.integration_status = f"failed:{resp.status_code}"
+                forwarded = {"ok": False, "error": f"HTTP {resp.status_code}"}
+        except Exception as exc:
+            report.integration_status = "retrying"
+            forwarded = {"ok": False, "error": str(exc)}
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {"ok": True, "report_id": report.id, "integration": forwarded, "message": "تم تسليم تقرير الرحلة للمشرف"}
 
 
 @router.post("/trips/{trip_id}/transfer")
