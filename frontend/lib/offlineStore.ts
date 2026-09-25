@@ -132,7 +132,7 @@ export function backendBaseUrl(): string {
 export async function nativeRequest(input: string, init: { method?: string; headers?: Record<string, string>; body?: unknown; timeoutMs?: number } = {}): Promise<{ status: number; ok: boolean; data: any }> {
   const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
   const body = init.body !== undefined ? (typeof init.body === "string" ? init.body : JSON.stringify(init.body)) : undefined;
-  const timeout = init.timeoutMs ?? 8000;
+  const timeout = init.timeoutMs ?? 60000;
   if (isNativePlatform()) {
     const method = (init.method || "GET").toUpperCase();
     if (method === "GET") {

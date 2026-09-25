@@ -52,7 +52,7 @@ export function markSignedIn() { signedOut = false; }
 async function fetchWithTimeout(input: string, init: RequestInit): Promise<Response> {
   if (typeof AbortController === "undefined") return fetch(input, init);
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 30000);
+  const t = setTimeout(() => ctl.abort(), 60000);
   try {
     return await fetch(input, { ...init, signal: ctl.signal });
   } finally {
@@ -61,12 +61,28 @@ async function fetchWithTimeout(input: string, init: RequestInit): Promise<Respo
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return requestToBases([getBaseUrl(), API_URL.render()], path, options);
+}
+
+async function requestToBases<T>(bases: string[], path: string, options: RequestInit): Promise<T> {
+  const distinct = Array.from(new Set(bases.filter(Boolean)));
   const token = getToken();
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const base = getBaseUrl();
-  const res = await fetchWithTimeout(`${base}${path}`, { ...options, headers, cache: "no-store" });
+  let res: Response | null = null;
+  let base = "";
+  let lastErr: unknown = null;
+  for (const candidate of distinct) {
+    base = candidate;
+    try {
+      res = await fetchWithTimeout(`${base}${path}`, { ...options, headers, cache: "no-store" });
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!res) throw lastErr instanceof Error ? lastErr : new Error("حدث خطأ في الطلب");
   if (res.status === 401 && path !== "/api/auth/login") {
     const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
     if (refresh && !signedOut) {
