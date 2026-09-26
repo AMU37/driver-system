@@ -56,6 +56,8 @@ export default function AdminPage() {
 
   const companyCodeOptions = companies.map(c => ({ value: c.code, label: `${c.name} (${c.code})` }));
   const companyIdOptions = companies.map(c => ({ value: c.id, label: c.name }));
+  const companyNameOptions = companies.map(c => ({ value: c.name, label: `${c.name} (${c.code})` }));
+  const housingNameOptions = housing.map(h => ({ value: h.name, label: h.name }));
 
   async function loadEmployees(search?: string) {
     try {
@@ -461,8 +463,8 @@ export default function AdminPage() {
     { key: "name", label: "الاسم", required: true },
     { key: "job_title", label: "المسمى الوظيفي" },
     { key: "department_name", label: "الإدارة" },
-    { key: "company_name", label: "الشركة" },
-    { key: "housing_location", label: "السكن" },
+    { key: "company_name", label: "الشركة", type: "select", options: companyNameOptions },
+    { key: "housing_location", label: "السكن", type: "select", options: housingNameOptions },
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
   ];
 
