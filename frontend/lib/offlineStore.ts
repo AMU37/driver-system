@@ -29,6 +29,7 @@ export type Snapshot = {
   version: number; built_at: string; counts: Record<string, number>;
   employees: SnapshotEmployee[]; buses: SnapshotBus[]; drivers: SnapshotDriver[]; planned: SnapshotPlanned[];
   routes?: { id: number; name: string; origin?: string | null; destination?: string | null; company_code: string; is_active: boolean }[];
+  companies?: { id: number; code: string; name: string; is_active: boolean }[];
   config?: { power_automate_url?: string };
 };
 
@@ -51,6 +52,7 @@ export type LocalTrip = {
   trip_number: string;
   driver_username: string;
   company_code: string;
+  company_name?: string | null;
   status: "boarding" | "completed" | "synced";
   started_at: string;
   completed_at?: string | null;
@@ -441,6 +443,7 @@ export function startLocalTrip(planned: SnapshotPlanned, driverUsername: string,
     trip_number: planned.trip_number,
     driver_username: driverUsername,
     company_code: planned.company_code,
+    company_name: companyNameFor(planned.company_code),
     status: "boarding",
     started_at: new Date().toISOString(),
     bus_number: actualBus?.trim() || planned.bus_number,
@@ -462,6 +465,13 @@ export function getAvailableBuses(): SnapshotBus[] {
   return s.buses.filter((b) => b.is_active);
 }
 
+function companyNameFor(code: string): string | null {
+  const s = getCachedSnapshot();
+  if (!s || !Array.isArray(s.companies)) return null;
+  const c = s.companies.find((x) => x.code === code);
+  return c ? c.name : null;
+}
+
 export function createManualTrip(input: {
   driverUsername: string;
   companyCode: string;
@@ -473,14 +483,26 @@ export function createManualTrip(input: {
   const parts = (input.routeLine || "").split("→");
   const origin = (parts[0] || input.routeLine || "").trim();
   const destination = (parts[1] || "").trim() || null;
+  const now = new Date();
+  const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const busKey = (input.busNumber || "").trim() || "000";
+  const localDate = (iso?: string | null) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const seq = list.filter(
+    (t) => t.planned_trip_id == null && (t.bus_number || "").trim() === busKey && localDate(t.started_at) === datePart
+  ).length + 1;
   const trip: LocalTrip = {
     id: "LT-" + uuid().slice(0, 8),
     planned_trip_id: null,
-    trip_number: "MAN-" + Date.now().toString(36).toUpperCase(),
+    trip_number: `TR-${busKey}-${datePart}-${input.companyCode}-${String(seq).padStart(3, "0")}`,
     driver_username: input.driverUsername,
     company_code: input.companyCode,
+    company_name: companyNameFor(input.companyCode),
     status: "boarding",
-    started_at: new Date().toISOString(),
+    started_at: now.toISOString(),
     bus_number: input.busNumber,
     planned_bus_number: input.busNumber,
     route_name: input.routeLine || null,

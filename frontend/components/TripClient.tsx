@@ -160,7 +160,7 @@ export default function TripClient({ id }: { id?: string | null }) {
         <div>
           <div className="eyebrow">ACTIVE TRIP</div>
           <h1>{trip.trip_number}</h1>
-          <p>{trip.route_name} — الباص {trip.bus_number || trip.planned_bus_number}</p>
+          <p>{trip.route_name} — الباص {trip.bus_number || trip.planned_bus_number} — {new Date(trip.scheduled_start_at || trip.started_at).toLocaleDateString("ar-EG", { dateStyle: "medium" })}</p>
         </div>
         <StatusBadge status={trip.status} />
       </div>
@@ -172,6 +172,8 @@ export default function TripClient({ id }: { id?: string | null }) {
       <div className="trip-summary">
         <div><span>الخط</span><strong>{routeLabel}</strong></div>
         {trip.trip_type && <div><span>نوع الرحلة</span><strong>{trip.trip_type}</strong></div>}
+        <div><span>الشركة</span><strong>{trip.company_name || trip.company_code || "—"}</strong></div>
+        <div><span>التاريخ</span><strong>{new Date(trip.scheduled_start_at || trip.started_at).toLocaleDateString("ar-EG", { dateStyle: "medium" })}</strong></div>
         <div><span>عدد الصاعدين</span><strong>{trip.passengers.length}</strong></div>
         <div><span>وقت البدء</span><strong>{trip.started_at ? new Date(trip.started_at).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div>
       </div>

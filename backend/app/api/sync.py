@@ -48,6 +48,12 @@ def sync_snapshot(user: User = Depends(get_current_user), db: Session = Depends(
         }
         for r in db.execute(text("SELECT id, name, origin, destination, company_code, is_active FROM routes ORDER BY name"))
     ]
+    companies = [
+        {
+            "id": r.id, "code": r.code, "name": r.name, "is_active": bool(r.is_active),
+        }
+        for r in db.execute(text("SELECT id, code, name, is_active FROM companies ORDER BY code"))
+    ]
     drivers = [
         {
             "id": r.id, "username": r.username, "full_name": r.full_name, "role": r.role,
@@ -84,12 +90,14 @@ def sync_snapshot(user: User = Depends(get_current_user), db: Session = Depends(
             "employees": len(employees),
             "buses": len(buses),
             "routes": len(routes),
+            "companies": len(companies),
             "drivers": len(drivers),
             "planned": len(planned),
         },
         "employees": employees,
         "buses": buses,
         "routes": routes,
+        "companies": companies,
         "drivers": drivers,
         "planned": planned,
         "config": {"power_automate_url": settings.microsoft_outbound_url or ""},
