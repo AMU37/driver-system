@@ -52,7 +52,7 @@ export function markSignedIn() { signedOut = false; }
 async function fetchWithTimeout(input: string, init: RequestInit): Promise<Response> {
   if (typeof AbortController === "undefined") return fetch(input, init);
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 60000);
+  const t = setTimeout(() => ctl.abort(), 90000);
   try {
     return await fetch(input, { ...init, signal: ctl.signal });
   } finally {
@@ -60,12 +60,12 @@ async function fetchWithTimeout(input: string, init: RequestInit): Promise<Respo
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  return requestToBases([getBaseUrl(), API_URL.render()], path, options);
-}
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
-async function requestToBases<T>(bases: string[], path: string, options: RequestInit): Promise<T> {
-  const distinct = Array.from(new Set(bases.filter(Boolean)));
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const bases = Array.from(new Set([getBaseUrl(), API_URL.render()].filter(Boolean)));
+  const retryable = !options.method || options.method === "GET" || path === "/api/auth/login";
+  const attempts = retryable ? 2 : 1;
   const token = getToken();
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
@@ -73,16 +73,24 @@ async function requestToBases<T>(bases: string[], path: string, options: Request
   let res: Response | null = null;
   let base = "";
   let lastErr: unknown = null;
-  for (const candidate of distinct) {
-    base = candidate;
-    try {
-      res = await fetchWithTimeout(`${base}${path}`, { ...options, headers, cache: "no-store" });
-      break;
-    } catch (err) {
-      lastErr = err;
+  for (const candidate of bases) {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        res = await fetchWithTimeout(`${candidate}${path}`, { ...options, headers, cache: "no-store" });
+        base = candidate;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts - 1) await sleep(1500);
+      }
     }
+    if (res) break;
   }
   if (!res) throw lastErr instanceof Error ? lastErr : new Error("حدث خطأ في الطلب");
+  return handleResponse(res, base, path, options, headers);
+}
+
+async function handleResponse<T>(res: Response, base: string, path: string, options: RequestInit, headers: Headers): Promise<T> {
   if (res.status === 401 && path !== "/api/auth/login") {
     const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
     if (refresh && !signedOut) {
