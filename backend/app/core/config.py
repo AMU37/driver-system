@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     microsoft_outbound_url: str = ""
     microsoft_inbound_api_key: str = ""
     microsoft_timeout_seconds: int = 15
+    # Break-glass account recovery. While this is empty the endpoint does not
+    # exist (404). Set a random value >= 24 chars, recover, then clear it.
+    recovery_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -63,6 +66,11 @@ class Settings(BaseSettings):
         key = self.microsoft_inbound_api_key.strip()
         return bool(key) and key.lower() not in KNOWN_WEAK_KEYS and len(key) >= 24
 
+    @property
+    def recovery_enabled(self) -> bool:
+        key = self.recovery_key.strip()
+        return bool(key) and key.lower() not in KNOWN_WEAK_KEYS and len(key) >= 24
+
     def runtime_warnings(self) -> list[str]:
         warnings: list[str] = []
         if not self.secure_secret:
@@ -74,6 +82,10 @@ class Settings(BaseSettings):
             warnings.append("MICROSOFT_INBOUND_API_KEY ضعيف (عالجه قبل تفعيل التكامل في الإنتاج)")
         if not self.microsoft_outbound_url.strip():
             warnings.append("MICROSOFT_OUTBOUND_URL فارغ: الترحيل الخارجي للرحلات لن يعمل")
+        if self.recovery_enabled:
+            warnings.append(
+                "SECURITY: RECOVERY_KEY مفعّل — استعادة الحسابات متاحة. احذف المتغير بعد الانتهاء فوراً"
+            )
         return warnings
 
     def runtime_errors(self) -> list[str]:

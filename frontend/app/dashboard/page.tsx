@@ -24,7 +24,6 @@ export default function DashboardPage() {
   const [bus, setBus] = useState("");
   const [buses, setBuses] = useState<SnapshotBus[]>([]);
   const [routes, setRoutes] = useState<SnapshotRoute[]>([]);
-  const [scheduledStart, setScheduledStart] = useState("");
   const [creating, setCreating] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [updating, setUpdating] = useState(false);
@@ -108,12 +107,10 @@ export default function DashboardPage() {
         tripType,
         origin: selected?.origin || undefined,
         destination: selected?.destination || undefined,
-        scheduledStartAt: scheduledStart ? new Date(scheduledStart).toISOString() : undefined,
       });
       setShowCreate(false);
       setRouteLine("");
       setBus("");
-      setScheduledStart("");
       refresh();
       setActive(trip);
       setUpcoming([]);
@@ -133,7 +130,7 @@ export default function DashboardPage() {
           <p>كل ما تحتاجه لتشغيل الرحلة من شاشة واحدة.</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <button className="primary-btn" onClick={() => { setBuses(getAvailableBuses()); setRoutes(getAvailableRoutes(user?.company_code || null)); setScheduledStart(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)); setFormErr(""); setShowCreate(true); }}><Route size={18} style={{ verticalAlign: "-3px" }}/> بدء الرحلة</button>
+          <button className="primary-btn" onClick={() => { setBuses(getAvailableBuses()); setRoutes(getAvailableRoutes(user?.company_code || null)); setFormErr(""); setShowCreate(true); }}><Route size={18} style={{ verticalAlign: "-3px" }}/> بدء الرحلة</button>
           <button className="secondary-btn" onClick={() => updateData(false)} disabled={updating}><Download size={18} style={{ verticalAlign: "-3px" }}/> {updating ? "جارٍ التحديث..." : "تحديث البيانات"}</button>
           <div className={`online-pill ${online ? "" : "offline"}`}><span className="live-dot"></span>{online ? "متصل" : "بدون إنترنت"}</div>
         </div>
@@ -189,10 +186,7 @@ export default function DashboardPage() {
                 {buses.map(b => <option key={b.id} value={b.number}>الباص {b.number} — {b.plate_number || ""}</option>)}
               </select></div>
             </label>
-            <label className="field"><span>موعد الانطلاق</span>
-              <div className="input-wrap"><Clock3 size={19}/><input type="datetime-local" value={scheduledStart} onChange={e => setScheduledStart(e.target.value)} /></div>
-            </label>
-            <div className="hint">السائق: {user?.full_name || "—"} · الشركة: {user?.company_code || "—"} · تُملأ حقول الانطلاق والوصول تلقائياً من خط السير المختار.</div>
+            <div className="hint">السائق: {user?.full_name || "—"} · الشركة: {user?.company_code || "—"} · وقت الانطلاق يُسجَّل تلقائياً لحظة البدء، وخط السير يملأ الانطلاق والوصول.</div>
             {formErr && <div className="alert danger">{formErr}</div>}
             <div className="modal-actions">
               <button className="secondary-btn" onClick={() => setShowCreate(false)}>إلغاء</button>

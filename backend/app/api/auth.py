@@ -1,9 +1,12 @@
+import hmac
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from jwt import PyJWTError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.ratelimit import enforce, login_ip_limiter, login_user_limiter, refresh_limiter
 from app.core.security import (
@@ -14,7 +17,8 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
-from app.schemas import ChangePasswordRequest, LoginRequest, RefreshRequest, TokenResponse, UserOut
+from app.schemas import AdminRecoveryRequest, ChangePasswordRequest, LoginRequest, RefreshRequest, TokenResponse, UserOut
+from app.services.trips import log_action
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -83,3 +87,27 @@ def change_password(
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.post("/recover")
+def recover_account(payload: AdminRecoveryRequest, request: Request, db: Session = Depends(get_db)):
+    """استعادة حساب عند فقدان كلمة المرور (مسؤول emergencies).
+
+    معطّلة تماماً ما لم يُضبط RECOVERY_KEY في متغيرات البيئة: بدونه ترجع 404
+    تماماً، فلا يوجد أي مسار دخول إضافي في الإنتاج العادي.
+    """
+    if not settings.recovery_enabled:
+        raise HTTPException(404, "غير موجود")
+    key = payload.recovery_key.strip()
+    if not hmac.compare_digest(key, settings.recovery_key.strip()):
+        enforce(login_ip_limiter, f"recover-ip:{_client_ip(request)}")
+        raise HTTPException(401, "مفتاح الاستعادة غير صحيح")
+    user = db.scalar(select(User).where(User.username == payload.username))
+    if not user:
+        raise HTTPException(404, "المستخدم غير موجود")
+    user.password_hash = hash_password(payload.new_password)
+    user.is_active = True
+    user.must_change_password = False
+    log_action(db, user.id, "account_recovered", "user", str(user.id), {"username": user.username})
+    db.commit()
+    return {"ok": True, "username": user.username, "role": user.role.value}

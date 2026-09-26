@@ -167,6 +167,21 @@ class DriverCreate(BaseModel):
         return value
 
 
+class AdminRecoveryRequest(BaseModel):
+    """استعادة حساب عند فقد كلمة المرور — يتطلب مفتاح RECOVERY_KEY في البيئة."""
+
+    username: str = Field(min_length=3, max_length=100)
+    new_password: str = Field(min_length=8, max_length=200)
+    recovery_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("new_password")
+    @classmethod
+    def recovery_password_strength(cls, value: str) -> str:
+        if not any(ch.isalpha() for ch in value) or not any(ch.isdigit() for ch in value):
+            raise ValueError(_PASSWORD_RULE)
+        return value
+
+
 class EmployeeSyncItem(BaseModel):
     employee_code: str
     name: str
