@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AuditLog, Bus, Employee, NewEmployeeRequest, PlannedTrip, Route, Trip, TripEmployee, TripStatus, User, UserRole
+from app.services.numbering import normalize_trip_type
 
 
 def now_utc() -> datetime:
@@ -108,6 +109,7 @@ def start_planned_trip(db: Session, user: User, planned: PlannedTrip, actual_bus
         actual_bus_id=actual_bus.id,
         route_id=planned.route_id,
         company_code=planned.company_code,
+        trip_type=planned.trip_type,
         status=TripStatus.started,
         started_at=now_utc(),
     )
@@ -231,6 +233,7 @@ def import_planned_trip(db: Session, payload):
         route_id=route.id,
         company_code=payload.company_code,
         trip_date=payload.scheduled_start_at,
+        trip_type=normalize_trip_type(payload.trip_type) if payload.trip_type else None,
         release_at=release_at,
         scheduled_start_at=payload.scheduled_start_at,
         status=status,

@@ -115,6 +115,7 @@ class PlannedTripOut(BaseModel):
     driver_id: str
     company_code: str
     trip_date: datetime
+    trip_type: str | None = None
     release_at: datetime | None = None
     scheduled_start_at: datetime
     status: str
@@ -133,6 +134,7 @@ class PlannedTripImport(BaseModel):
     origin: str
     destination: str
     company_code: str = "YCSR"
+    trip_type: str | None = None
     scheduled_start_at: datetime
     release_hours: int | None = None
     metadata: dict = {}
@@ -144,7 +146,8 @@ class AdminTripPlanCreate(BaseModel):
     route_name: str
     origin: str
     destination: str
-    company_code: str = "YCSR"
+    company_code: str | None = None
+    trip_type: str | None = None
     scheduled_start_at: datetime
     release_hours: int | None = None
 

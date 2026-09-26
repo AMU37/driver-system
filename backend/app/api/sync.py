@@ -66,13 +66,14 @@ def sync_snapshot(user: User = Depends(get_current_user), db: Session = Depends(
             "id": r.id, "external_id": r.external_id, "trip_number": r.trip_number, "driver_id": r.driver_id,
             "driver_username": r.driver_username, "company_code": r.company_code, "bus_number": r.bus_number,
             "route_name": r.route_name, "origin": r.origin, "destination": r.destination,
+            "trip_type": r.trip_type,
             "trip_date": _norm(r.trip_date), "release_at": _norm(r.release_at),
             "scheduled_start_at": _norm(r.scheduled_start_at), "status": r.status,
         }
         for r in db.execute(text(
             """
             SELECT p.id, p.external_id, p.trip_number, p.driver_id, p.company_code,
-                   p.trip_date, p.release_at, p.scheduled_start_at, p.status,
+                   p.trip_date, p.release_at, p.scheduled_start_at, p.status, p.trip_type,
                    b.number AS bus_number, ro.name AS route_name, ro.origin, ro.destination,
                    u.username AS driver_username
             FROM planned_trips p

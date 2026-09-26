@@ -26,6 +26,7 @@ def planned_out(item: PlannedTrip) -> dict:
         "driver_id": item.driver_id,
         "company_code": item.company_code,
         "trip_date": item.trip_date,
+        "trip_type": item.trip_type,
         "release_at": item.release_at,
         "scheduled_start_at": item.scheduled_start_at,
         "status": item.status.value,

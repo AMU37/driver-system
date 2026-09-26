@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BusFront, CheckCircle2, Clock3, Download, RefreshCw, Route, Send, Users2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
-import { createManualTrip, getActiveLocalTrip, getAvailableBuses, getPlannedForDriver, isOnline, listLocalTrips, loadSnapshot, localStats, pendingSyncCount, refreshLiveData, syncNow, syncSnapshotFromServer, snapshotMeta, TRIP_LOCATIONS, TRIP_TYPES, type LocalTrip, type SnapshotBus, type SnapshotPlanned, type TripType } from "@/lib/offlineStore";
+import { createManualTrip, getActiveLocalTrip, getAvailableBuses, getAvailableRoutes, getPlannedForDriver, isOnline, listLocalTrips, loadSnapshot, localStats, pendingSyncCount, refreshLiveData, syncNow, syncSnapshotFromServer, snapshotMeta, TRIP_LOCATIONS, TRIP_TYPES, type LocalTrip, type SnapshotBus, type SnapshotPlanned, type SnapshotRoute, type TripType } from "@/lib/offlineStore";
 import { ActiveCard, PlannedCard } from "@/components/TripCard";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -23,6 +23,8 @@ export default function DashboardPage() {
   const [tripType, setTripType] = useState<TripType>("مغادر");
   const [bus, setBus] = useState("");
   const [buses, setBuses] = useState<SnapshotBus[]>([]);
+  const [routes, setRoutes] = useState<SnapshotRoute[]>([]);
+  const [scheduledStart, setScheduledStart] = useState("");
   const [creating, setCreating] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [updating, setUpdating] = useState(false);
@@ -97,8 +99,21 @@ export default function DashboardPage() {
     setCreating(true);
     setFormErr("");
     try {
-      const trip = createManualTrip({ driverUsername: user.username, companyCode: user.company_code || "YCSR", routeLine: routeLine.trim(), busNumber: bus, tripType });
+      const selected = routes.find(r => r.name === routeLine.trim());
+      const trip = createManualTrip({
+        driverUsername: user.username,
+        companyCode: user.company_code || "YCSR",
+        routeLine: routeLine.trim(),
+        busNumber: bus,
+        tripType,
+        origin: selected?.origin || undefined,
+        destination: selected?.destination || undefined,
+        scheduledStartAt: scheduledStart ? new Date(scheduledStart).toISOString() : undefined,
+      });
       setShowCreate(false);
+      setRouteLine("");
+      setBus("");
+      setScheduledStart("");
       refresh();
       setActive(trip);
       setUpcoming([]);
@@ -118,7 +133,7 @@ export default function DashboardPage() {
           <p>كل ما تحتاجه لتشغيل الرحلة من شاشة واحدة.</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <button className="primary-btn" onClick={() => { setBuses(getAvailableBuses()); setFormErr(""); setShowCreate(true); }}><Route size={18} style={{ verticalAlign: "-3px" }}/> بدء الرحلة</button>
+          <button className="primary-btn" onClick={() => { setBuses(getAvailableBuses()); setRoutes(getAvailableRoutes(user?.company_code || null)); setScheduledStart(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)); setFormErr(""); setShowCreate(true); }}><Route size={18} style={{ verticalAlign: "-3px" }}/> بدء الرحلة</button>
           <button className="secondary-btn" onClick={() => updateData(false)} disabled={updating}><Download size={18} style={{ verticalAlign: "-3px" }}/> {updating ? "جارٍ التحديث..." : "تحديث البيانات"}</button>
           <div className={`online-pill ${online ? "" : "offline"}`}><span className="live-dot"></span>{online ? "متصل" : "بدون إنترنت"}</div>
         </div>
@@ -157,7 +172,10 @@ export default function DashboardPage() {
           </div>
           <div className="stack-lg">
             <label className="field"><span>خط السير</span>
-              <div className="input-wrap"><Route size={19}/><input list="route-list" value={routeLine} onChange={e => setRouteLine(e.target.value)} placeholder="مثال: الحديدة → الشركة" /></div>
+              <div className="input-wrap"><Route size={19}/><select value={routeLine} onChange={e => setRouteLine(e.target.value)}>
+                <option value="">اختر خط السير...</option>
+                {routes.map(r => <option key={r.id} value={r.name}>{r.name} ({r.origin} → {r.destination})</option>)}
+              </select></div>
               <datalist id="route-list">{TRIP_LOCATIONS.map(l => <option key={l} value={l} />)}</datalist>
             </label>
             <label className="field"><span>نوع الرحلة</span>
@@ -171,6 +189,10 @@ export default function DashboardPage() {
                 {buses.map(b => <option key={b.id} value={b.number}>الباص {b.number} — {b.plate_number || ""}</option>)}
               </select></div>
             </label>
+            <label className="field"><span>موعد الانطلاق</span>
+              <div className="input-wrap"><Clock3 size={19}/><input type="datetime-local" value={scheduledStart} onChange={e => setScheduledStart(e.target.value)} /></div>
+            </label>
+            <div className="hint">السائق: {user?.full_name || "—"} · الشركة: {user?.company_code || "—"} · تُملأ حقول الانطلاق والوصول تلقائياً من خط السير المختار.</div>
             {formErr && <div className="alert danger">{formErr}</div>}
             <div className="modal-actions">
               <button className="secondary-btn" onClick={() => setShowCreate(false)}>إلغاء</button>

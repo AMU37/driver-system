@@ -131,6 +131,7 @@ def main():
             "route_name": r["route_name"],
             "origin": r["origin"],
             "destination": r["destination"],
+            "trip_type": r["trip_type"],
             "trip_date": norm(r["trip_date"]),
             "release_at": norm(r["release_at"]),
             "scheduled_start_at": norm(r["scheduled_start_at"]),
@@ -139,7 +140,7 @@ def main():
         for r in db.execute(
             """
             SELECT p.id, p.external_id, p.trip_number, p.driver_id, p.company_code,
-                   p.trip_date, p.release_at, p.scheduled_start_at, p.status,
+                   p.trip_date, p.release_at, p.scheduled_start_at, p.status, p.trip_type,
                    b.number AS bus_number, ro.name AS route_name, ro.origin, ro.destination,
                    u.username AS u
             FROM planned_trips p

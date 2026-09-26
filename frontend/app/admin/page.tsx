@@ -14,7 +14,7 @@ import {
 } from "@/lib/api";
 import { ArchiveRestore, BusFront, ChevronDown, ChevronUp, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck } from "lucide-react";
 import { useAuthGuard } from "@/lib/authGuard";
-import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, queueAdminPlan, removeLocalAdminPlan, type Snapshot } from "@/lib/offlineStore";
+import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, openReportTripWhatsApp, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText } from "@/lib/export";
 
@@ -32,6 +32,15 @@ const mapSnapshotPlanned = (p: any) => ({ ...p, driver_username: p.driver_userna
 const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", is_active: e.is_active });
 const mapSnapshotBus = (b: any) => ({ id: b.id, number: b.number, plate_number: b.plate_number ?? "", capacity: b.capacity, company_code: b.company_code, is_active: b.is_active });
 const mapSnapshotRoute = (r: any) => ({ id: r.id, name: r.name, origin: r.origin ?? "", destination: r.destination ?? "", company_code: r.company_code, is_active: r.is_active });
+
+/** الرحلة القديمة المخططة قبل إضافة النوع لا تُعرض كنوع محدد. */
+export const tripTypeLabel = (value?: string | null) => {
+  const v = (value || "").trim();
+  if (!v) return "—";
+  if (v === "قادم" || v === "قادمة" || v === "داخل" || v.toLowerCase() === "inbound") return "قادم";
+  if (v === "مغادر" || v === "مغادرة" || v === "خارج" || v.toLowerCase() === "outbound") return "مغادر";
+  return v;
+};
 
 export default function AdminPage() {
   useAuthGuard(["admin", "supervisor"]);
@@ -55,7 +64,7 @@ export default function AdminPage() {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const backupRef = useRef<HTMLInputElement>(null);
-  const [form, setForm] = useState<any>({ driver_code: "", bus_number: "", route_name: "", origin: "", destination: "", scheduled_start_at: "", release_hours: "8" });
+  const [form, setForm] = useState<any>({ driver_code: "", bus_number: "", route_name: "", origin: "", destination: "", scheduled_start_at: "", trip_type: "مغادر" });
   const [planOpen, setPlanOpen] = useState(false);
   const pendingAdminOps = getAdminOps();
 
@@ -120,8 +129,9 @@ export default function AdminPage() {
       id: -(i + 1),
       trip_number: p.client_id,
       driver_id: p.driver_code,
-      company_code: "YCSR",
+      company_code: p.company_code || "YCSR",
       trip_date: "",
+      trip_type: p.trip_type,
       scheduled_start_at: p.scheduled_start_at,
       status: "local",
       bus_number: p.bus_number,
@@ -147,8 +157,9 @@ export default function AdminPage() {
           route_name: p.route_name,
           origin: p.origin,
           destination: p.destination,
+          company_code: p.company_code,
           scheduled_start_at: p.scheduled_start_at,
-          release_hours: p.release_hours,
+          trip_type: p.trip_type,
         });
         removeLocalAdminPlan(p.client_id);
         pushed += 1;
@@ -346,16 +357,17 @@ export default function AdminPage() {
     if (!form.scheduled_start_at) { setMsg("حدد موعد الانطلاق"); return; }
     setLoading(true);
     setMsg("");
+    const driver = drivers.find(d => d.driver_code === form.driver_code);
     const payload = {
       driver_code: form.driver_code,
       bus_number: form.bus_number,
       route_name: form.route_name,
       origin: form.origin,
       destination: form.destination,
+      company_code: driver?.company_code || undefined,
+      trip_type: form.trip_type || "مغادر",
       scheduled_start_at: new Date(form.scheduled_start_at).toISOString(),
-      release_hours: form.release_hours ? Number(form.release_hours) : undefined,
     };
-    const driver = drivers.find(d => d.driver_code === form.driver_code);
     const hasToken = typeof window !== "undefined" && !!window.localStorage.getItem("access_token");
     const saveLocal = (msg: string) => {
       queueAdminPlan({ ...payload, driver_name: driver?.full_name });
@@ -614,8 +626,8 @@ export default function AdminPage() {
           <label className="field"><span>خط السير</span><select value={form.route_name} onChange={e => selectRoute(e.target.value)}><option value="">— اختر الخط —</option>{activeRoutes.map(r => <option key={r.id} value={r.name}>{r.name} ({r.origin} → {r.destination})</option>)}</select></label>
           <label className="field"><span>مكان الانطلاق</span><input value={form.origin} disabled /></label>
           <label className="field"><span>مكان الوصول</span><input value={form.destination} disabled /></label>
+          <label className="field"><span>نوع الرحلة</span><select value={form.trip_type} onChange={e => setForm({ ...form, trip_type: e.target.value })}>{TRIP_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}</select></label>
           <label className="field"><span>موعد الانطلاق</span><input type="datetime-local" value={form.scheduled_start_at} onChange={e => setForm({ ...form, scheduled_start_at: e.target.value })} /></label>
-          <label className="field"><span>وقت الإتاحة قبل الانطلاق</span><select value={form.release_hours} onChange={e => setForm({ ...form, release_hours: e.target.value })}><option value="2">ساعتان</option><option value="4">4 ساعات</option><option value="8">8 ساعات</option><option value="0">فوراً</option></select></label>
         </div>
         <button className="primary-btn" onClick={createTrip} disabled={loading || !form.scheduled_start_at || !form.driver_code || !form.bus_number || !form.route_name}><Plus size={18} />{loading ? "جارٍ الحفظ..." : "تخطيط الرحلة"}</button>
         </>)}
@@ -648,7 +660,7 @@ export default function AdminPage() {
             <div className="table-scroll">
               <table>
                 <thead>
-                  <tr><th>الرحلة</th><th>السائق</th><th>الباص</th><th>الخط</th><th>الموعد</th><th>الحالة</th></tr>
+                  <tr><th>الرحلة</th><th>السائق</th><th>الباص</th><th>الخط</th><th>النوع</th><th>الموعد</th><th>الحالة</th></tr>
                 </thead>
                 <tbody>
                   {plans.map(p => (
@@ -657,6 +669,7 @@ export default function AdminPage() {
                       <td>{(p as any).local ? (drivers.find(d => d.driver_code === p.driver_id)?.full_name || p.driver_id || "—") : (drivers.find(d => d.id === p.driver_id)?.full_name || "—")}</td>
                       <td>{p.bus_number}</td>
                       <td>{p.route_name}<small>{p.origin} → {p.destination}</small></td>
+                      <td>{tripTypeLabel(p.trip_type)}</td>
                       <td>{new Date(p.scheduled_start_at).toLocaleString("ar-EG")}</td>
                       <td>{(p as any).local ? <span className="status status-local">محفوظة محلياً</span> : <StatusBadge status={p.status} />}</td>
                     </tr>

@@ -57,6 +57,14 @@ def migrate_schema() -> None:
                 conn.exec_driver_sql(
                     "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE NOT NULL"
                 )
+    for table in ("planned_trips", "trips"):
+        if column_exists(table, "trip_type"):
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trip_type VARCHAR(20)")
+        except Exception:
+            continue
     _normalize_datetime_columns()
 
 

@@ -4,9 +4,19 @@ export const TRIP_LOCATIONS = ["الحديدة", "الصليف", "الولي", "
 export type TripLocation = (typeof TRIP_LOCATIONS)[number];
 export type TripType = "قادم" | "مغادر";
 export const TRIP_TYPES: { value: TripType; label: string }[] = [
-  { value: "مغادر", label: "مغادر (من الشركة)" },
+  { value: "مغادر", label: "مغادرة (من الشركة)" },
   { value: "قادم", label: "قادم (إلى الشركة)" },
 ];
+/** الحرف المستخدم في رقم الرحلة لكل نوع حركة — mirrors backend/app/services/numbering.py */
+export const TRIP_TYPE_CODES: Record<string, string> = { مغادر: "M", قادم: "Q" };
+export function tripTypeCode(value: string | null | undefined): string {
+  const raw = (value || "").trim();
+  if (raw === "قادم" || raw === "قادمة" || raw === "داخل" || raw.toLowerCase() === "inbound") return "Q";
+  return "M";
+}
+export function normalizeTripType(value: string | null | undefined): TripType {
+  return tripTypeCode(value) === "Q" ? "قادم" : "مغادر";
+}
 
 export type SnapshotEmployee = {
   id: number;
@@ -23,6 +33,7 @@ export type SnapshotDriver = { id: string; username: string; full_name: string; 
 export type SnapshotPlanned = {
   id: number; external_id?: string | null; trip_number: string; driver_id: string; driver_username?: string | null;
   company_code: string; bus_number?: string | null; route_name?: string | null; origin?: string | null; destination?: string | null;
+  trip_type?: string | null;
   trip_date?: string | null; release_at?: string | null; scheduled_start_at: string; status: string;
 };
 export type Snapshot = {
@@ -374,6 +385,8 @@ export type LocalAdminPlan = {
   route_name?: string;
   origin?: string;
   destination?: string;
+  trip_type?: string | null;
+  company_code?: string | null;
   scheduled_start_at: string;
   release_hours?: number;
   created_at: string;
@@ -416,11 +429,12 @@ export function getPlannedForDriver(driverUsername: string, driverCode?: string 
           trip_number: p.client_id,
           driver_id: p.driver_code,
           driver_username: driverUsername,
-          company_code: "YCSR",
+          company_code: p.company_code || "YCSR",
           bus_number: p.bus_number || null,
           route_name: p.route_name || null,
           origin: p.origin || null,
           destination: p.destination || null,
+          trip_type: p.trip_type || null,
           scheduled_start_at: p.scheduled_start_at,
           status: "planned",
           local: true,
@@ -451,6 +465,7 @@ export function startLocalTrip(planned: SnapshotPlanned, driverUsername: string,
     route_name: planned.route_name,
     origin: planned.origin,
     destination: planned.destination,
+    trip_type: normalizeTripType(planned.trip_type),
     scheduled_start_at: planned.scheduled_start_at,
     passengers: [],
   };
@@ -465,6 +480,17 @@ export function getAvailableBuses(): SnapshotBus[] {
   return s.buses.filter((b) => b.is_active);
 }
 
+export type SnapshotRoute = { id: number; name: string; origin?: string | null; destination?: string | null; company_code: string; is_active: boolean };
+
+/** خطوط السير النشطة — نفس مصدر بيانات نموذج التخطيط في لوحة التحكم. */
+export function getAvailableRoutes(companyCode?: string | null): SnapshotRoute[] {
+  const s = getCachedSnapshot();
+  if (!s || !Array.isArray(s.routes)) return [];
+  const routes = s.routes.filter((r) => r.is_active);
+  const scoped = companyCode ? routes.filter((r) => !r.company_code || r.company_code === companyCode) : routes;
+  return scoped.length ? scoped : routes;
+}
+
 function companyNameFor(code: string): string | null {
   const s = getCachedSnapshot();
   if (!s || !Array.isArray(s.companies)) return null;
@@ -472,43 +498,79 @@ function companyNameFor(code: string): string | null {
   return c ? c.name : null;
 }
 
+/**
+ * يولّد رقم رحلة بنفس صيغة الخادم: TR-{bus}-{YYYYMMDD}-{company}-{M|Q}-{NNN}
+ * التسلسل محسوب من أعلى رقم قائم داخل (باص + يوم + شركة + نوع) بعد جمع:
+ * رحلات الجهاز نفسها + الرحلات المخططة (الحيّة واللقطة والمخططة محلياً).
+ * المولّد لا يكسر أبداً عند التعارض: يرتفع التسلسل حتى يجد رقماً حراً.
+ */
 export function createManualTrip(input: {
   driverUsername: string;
   companyCode: string;
   routeLine: string;
   busNumber: string;
   tripType: TripType;
+  origin?: string;
+  destination?: string;
+  scheduledStartAt?: string;
 }): LocalTrip {
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const parts = (input.routeLine || "").split("→");
-  const origin = (parts[0] || input.routeLine || "").trim();
-  const destination = (parts[1] || "").trim() || null;
+  const origin = (input.origin || parts[0] || input.routeLine || "").trim();
+  const destination = (input.destination || parts[1] || "").trim() || null;
   const now = new Date();
-  const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const scheduled = input.scheduledStartAt ? new Date(input.scheduledStartAt) : now;
+  const day = Number.isNaN(scheduled.getTime()) ? now : scheduled;
+  const datePart = `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, "0")}${String(day.getDate()).padStart(2, "0")}`;
   const busKey = (input.busNumber || "").trim() || "000";
+  const companyKey = (input.companyCode || "").trim() || "YCSR";
+  const code = tripTypeCode(input.tripType);
+
   const localDate = (iso?: string | null) => {
     if (!iso) return "";
     const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
     return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   };
-  const seq = list.filter(
-    (t) => t.planned_trip_id == null && (t.bus_number || "").trim() === busKey && localDate(t.started_at) === datePart
-  ).length + 1;
+  const prefix = `TR-${busKey}-${datePart}-${companyKey}-${code}-`;
+  let highest = 0;
+  const bump = (number?: string | null) => {
+    if (!number || !number.startsWith(prefix)) return;
+    const tail = number.slice(prefix.length);
+    if (/^\d+$/.test(tail)) highest = Math.max(highest, parseInt(tail, 10));
+  };
+  list.forEach((t) => {
+    if (localDate(t.scheduled_start_at || t.started_at) === datePart) bump(t.trip_number);
+  });
+  const snapshotPlanned = getCachedSnapshot()?.planned || [];
+  [...livePlanned(), ...snapshotPlanned].forEach((p) => {
+    if (localDate(p.scheduled_start_at) === datePart) bump(p.trip_number);
+  });
+
+  let seq = highest + 1;
+  let tripNumber = `${prefix}${String(seq).padStart(3, "0")}`;
+  const taken = new Set(list.map((t) => t.trip_number));
+  while (taken.has(tripNumber)) {
+    seq += 1;
+    tripNumber = `${prefix}${String(seq).padStart(3, "0")}`;
+  }
+
   const trip: LocalTrip = {
     id: "LT-" + uuid().slice(0, 8),
     planned_trip_id: null,
-    trip_number: `TR-${busKey}-${datePart}-${input.companyCode}-${String(seq).padStart(3, "0")}`,
+    trip_number: tripNumber,
     driver_username: input.driverUsername,
     company_code: input.companyCode,
     company_name: companyNameFor(input.companyCode),
     status: "boarding",
     started_at: now.toISOString(),
+    scheduled_start_at: day.toISOString(),
     bus_number: input.busNumber,
     planned_bus_number: input.busNumber,
     route_name: input.routeLine || null,
     origin,
     destination,
-    trip_type: input.tripType,
+    trip_type: normalizeTripType(input.tripType),
     passengers: [],
   };
   list.push(trip);

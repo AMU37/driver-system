@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
@@ -11,13 +12,14 @@ from app.core.security import hash_password
 from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
 from app.schemas import AdminTripPlanCreate, AdminUserCreate, AdminUserUpdate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
 from app.services.employees import import_employee_rows, parse_employee_rows
+from app.services.numbering import next_trip_number, normalize_trip_type
 from app.services.trips import ensure_bus, ensure_route
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 def planned_out(item: PlannedTrip) -> dict:
-    return {"id": item.id, "external_id": item.external_id, "trip_number": item.trip_number, "driver_id": item.driver_id, "company_code": item.company_code, "trip_date": item.trip_date, "release_at": item.release_at, "scheduled_start_at": item.scheduled_start_at, "status": item.status.value, "bus_number": item.bus.number if item.bus else None, "route_name": item.route.name if item.route else None, "origin": item.route.origin if item.route else None, "destination": item.route.destination if item.route else None}
+    return {"id": item.id, "external_id": item.external_id, "trip_number": item.trip_number, "driver_id": item.driver_id, "company_code": item.company_code, "trip_date": item.trip_date, "trip_type": item.trip_type, "release_at": item.release_at, "scheduled_start_at": item.scheduled_start_at, "status": item.status.value, "bus_number": item.bus.number if item.bus else None, "route_name": item.route.name if item.route else None, "origin": item.route.origin if item.route else None, "destination": item.route.destination if item.route else None}
 
 
 @router.get("/drivers", response_model=list[UserOut])
@@ -149,28 +151,40 @@ def create_plan(payload: AdminTripPlanCreate, user: User = Depends(require_roles
     driver = db.scalar(select(User).where(User.driver_code == payload.driver_code, User.role == UserRole.driver))
     if not driver:
         raise HTTPException(404, "السائق غير موجود")
-    bus = ensure_bus(db, payload.bus_number, payload.company_code)
-    route = ensure_route(db, payload.route_name, payload.origin, payload.destination, payload.company_code)
+    company_code = (payload.company_code or driver.company_code or "YCSR")
+    trip_type = normalize_trip_type(payload.trip_type)
+    bus = ensure_bus(db, payload.bus_number, company_code)
+    route = ensure_route(db, payload.route_name, payload.origin, payload.destination, company_code)
     scheduled = payload.scheduled_start_at
     if scheduled.tzinfo is None:
         scheduled = scheduled.replace(tzinfo=timezone.utc)
     release_hours = payload.release_hours if payload.release_hours is not None else settings.trip_release_hours
     release_at = scheduled - timedelta(hours=release_hours)
     status = TripStatus.available if datetime.now(timezone.utc) >= release_at else TripStatus.planned
-    day_count = db.scalar(select(func.count(PlannedTrip.id)).where(func.date(PlannedTrip.scheduled_start_at) == scheduled.date())) or 0
-    item = PlannedTrip(
-        trip_number=f"TR-{payload.bus_number}-{scheduled:%Y%m%d}-{payload.company_code}-{day_count + 1:03d}",
-        driver_id=driver.id,
-        bus_id=bus.id,
-        route_id=route.id,
-        company_code=payload.company_code,
-        trip_date=scheduled,
-        release_at=release_at,
-        scheduled_start_at=scheduled,
-        status=status,
-    )
-    db.add(item)
-    db.commit()
+    item: PlannedTrip | None = None
+    for _ in range(5):
+        trip_number = next_trip_number(db, bus_number=payload.bus_number, company_code=company_code, when=scheduled, trip_type=trip_type)
+        item = PlannedTrip(
+            trip_number=trip_number,
+            driver_id=driver.id,
+            bus_id=bus.id,
+            route_id=route.id,
+            company_code=company_code,
+            trip_date=scheduled,
+            trip_type=trip_type,
+            release_at=release_at,
+            scheduled_start_at=scheduled,
+            status=status,
+        )
+        db.add(item)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            item = None
+    if item is None:
+        raise HTTPException(409, "تعذر توليد رقم رحلة فريد — أعد المحاولة")
     db.refresh(item)
     item.bus = bus
     item.route = route
