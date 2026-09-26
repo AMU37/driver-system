@@ -181,3 +181,93 @@ export function printTripPdf(trip: LocalTrip) {
     w.print();
   }, 350);
 }
+
+/* ---- تنسيق تقارير الرحلات الواصلة من السائقين (للمشرف/المدير) ---- */
+
+export function reportTripOf(report: any): { trip: Record<string, any>; employees: any[] } {
+  const trip = (report && report.raw && report.raw.trip) || {};
+  return { trip, employees: Array.isArray(trip.employees) ? trip.employees : [] };
+}
+
+export function reportRouteLabel(report: any): string {
+  const { trip } = reportTripOf(report);
+  return trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || report.route || "—");
+}
+
+export function reportEmployeeStatus(p: any): string {
+  if (p.needs_review) return "للمراجعة";
+  if (p.is_employee === false || p.source === "non_employee") return "غير موظف";
+  return "مؤكد";
+}
+
+export function reportTripText(report: any): string {
+  const { trip, employees } = reportTripOf(report);
+  const lines = [
+    `تقرير رحلة ${report.trip_number}`,
+    `السائق: ${report.driver_name || report.driver_username || "—"}`,
+    `الباص: ${trip.bus_number || "—"}`,
+    `الخط: ${reportRouteLabel(report)}`,
+  ];
+  if (trip.trip_type) lines.push(`النوع: ${trip.trip_type}`);
+  if (trip.company_code) lines.push(`الشركة: ${trip.company_code}`);
+  if (trip.scheduled_start_at) lines.push(`الانطلاق المخطط: ${fmt(trip.scheduled_start_at)}`);
+  if (trip.started_at) lines.push(`البداية: ${fmt(trip.started_at)}`);
+  if (trip.completed_at) lines.push(`الإكمال: ${fmt(trip.completed_at)}`);
+  lines.push(`عدد الصاعدين: ${employees.length}`);
+  if (employees.length) {
+    lines.push("الصاعدون:");
+    employees.forEach((p, i) => {
+      const who = p.name || (p.employee_code ? `كود ${p.employee_code}` : "غير موظف");
+      const extra = p.employee_code && p.name ? ` (${p.employee_code})` : "";
+      const note = ` — ${reportEmployeeStatus(p)}`;
+      lines.push(`${i + 1}) ${who}${extra}${note}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+export function reportTripWhatsAppUrl(report: any): string {
+  return "https://wa.me/?text=" + encodeURIComponent(reportTripText(report));
+}
+
+export function openReportTripWhatsApp(report: any) {
+  window.open(reportTripWhatsAppUrl(report), isNativePlatform() ? "_system" : "_blank", "noopener");
+}
+
+export function printTripReport(report: any) {
+  const { trip, employees } = reportTripOf(report);
+  const w = window.open("", "_blank");
+  if (!w) return;
+  const rows = employees
+    .map(
+      (p, i) =>
+        `<tr><td>${i + 1}</td><td>${esc(p.employee_code || "")}</td><td>${esc(p.name || "—")}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.job || "")}</td><td>${esc(p.housing_location || "")}</td><td>${esc(reportEmployeeStatus(p))}</td></tr>`
+    )
+    .join("");
+  const route = reportRouteLabel(report);
+  const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>رحلة ${esc(report.trip_number)}</title>
+<style>
+ body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
+ h1{font-size:20px;margin:0 0 4px}
+ .meta{color:#55606e;font-size:13px;margin-bottom:14px;line-height:1.8}
+ table{width:100%;border-collapse:collapse;font-size:13px}
+ th,td{border:1px solid #cfd6dd;padding:8px 10px;text-align:right}
+ th{background:#eef4ff}
+ h2{font-size:15px;margin:20px 0 8px}
+ @media print{body{margin:10mm}}
+</style></head><body>
+<h1>تقرير رحلة ${esc(report.trip_number)}</h1>
+<div class="meta">السائق: ${esc(report.driver_name || report.driver_username || "—")} · الباص: ${esc(trip.bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}${trip.company_code ? " · الشركة: " + esc(trip.company_code) : ""}</div>
+<div class="meta">الانطلاق المخطط: ${esc(fmt(trip.scheduled_start_at))} · البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
+<h2>الصاعدون (${employees.length})</h2>
+<table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الوظيفة</th><th>السكن</th><th>الحالة</th></tr></thead>
+<tbody>${rows}</tbody></table>
+</body></html>`;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => {
+    w.focus();
+    w.print();
+  }, 350);
+}

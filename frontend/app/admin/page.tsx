@@ -4,27 +4,30 @@ import AppShell from "@/components/AppShell";
 import CrudTable, { type CrudColumn, type CrudField } from "@/components/CrudTable";
 import StatusBadge from "@/components/StatusBadge";
 import {
-  addBus, addCompany, addDepartment, addDriver, addEmployeeMaster, addHousing, addJob, addRoute,
+  addBus, addCompany, addDepartment, addDriver, addAdminUser, addEmployeeMaster, addHousing, addJob, addRoute,
   createAdminPlan, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
   deleteHousing, deleteJob, deleteRoute, getAdminBuses, getAdminDrivers, getAdminEmployees,
-  getAdminPlanned, getAdminTripReports, getCompanies, getDepartments, getHousing, getJobs, getNewEmployees,
+  getAdminPlanned, getAdminTripReports, getAdminUsers, getCompanies, getDepartments, getHousing, getJobs, getNewEmployees,
   getRoutes, importEmployeesFile, reviewNewEmployee, updateBus, updateCompany, updateDepartment,
-  updateDriver, updateEmployeeMaster, updateHousing, updateJob, updateRoute,
+  updateAdminUser, updateDriver, updateEmployeeMaster, updateHousing, updateJob, updateRoute,
   type PlannedTrip, type User,
 } from "@/lib/api";
-import { ArchiveRestore, BusFront, ChevronDown, ChevronUp, Download, FileSpreadsheet, Plus, RefreshCw, Send, Upload, UserCheck } from "lucide-react";
+import { ArchiveRestore, BusFront, ChevronDown, ChevronUp, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck } from "lucide-react";
 import { useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, queueAdminPlan, removeLocalAdminPlan, type Snapshot } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
-import { downloadContent, reportStatusLabel, reportsToXlsText } from "@/lib/export";
+import { downloadContent, openReportTripWhatsApp, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText } from "@/lib/export";
 
-type Tab = "plans" | "drivers" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips";
+type Tab = "plans" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips";
 
 const BOOL_OPTIONS = [{ value: true, label: "نشط" }, { value: false, label: "معطّل" }];
 const YESNO = (v: any) => (v ? "نشط" : "معطّل");
 const DASH = (v: any) => v || "—";
+const ROLE_LABEL: Record<string, string> = { driver: "سائق", supervisor: "مشرف", admin: "مدير" };
+const ROLE_OPTIONS = [{ value: "supervisor", label: "مشرف" }, { value: "admin", label: "أدمن" }];
 
 const mapSnapshotDriver = (d: any) => ({ id: d.id, driver_code: d.driver_code ?? "", username: d.username, full_name: d.full_name, role: d.role, company_code: d.company_code, is_active: true });
+const mapSnapshotUsers = (u: any) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, driver_code: u.driver_code ?? "", company_code: u.company_code ?? "", is_active: true, must_change_password: false });
 const mapSnapshotPlanned = (p: any) => ({ ...p, driver_username: p.driver_username ?? "", status: p.status ?? "planned", trip_number: p.trip_number ?? String(p.id), trip_date: p.trip_date ?? "" });
 const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", is_active: e.is_active });
 const mapSnapshotBus = (b: any) => ({ id: b.id, number: b.number, plate_number: b.plate_number ?? "", capacity: b.capacity, company_code: b.company_code, is_active: b.is_active });
@@ -34,6 +37,7 @@ export default function AdminPage() {
   useAuthGuard(["admin", "supervisor"]);
   const [tab, setTab] = useState<Tab>("plans");
   const [drivers, setDrivers] = useState<User[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [plans, setPlans] = useState<PlannedTrip[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [newEmployees, setNewEmployees] = useState<any[]>([]);
@@ -44,6 +48,7 @@ export default function AdminPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [housing, setHousing] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
+  const [viewReport, setViewReport] = useState<any | null>(null);
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [empSearch, setEmpSearch] = useState("");
@@ -76,7 +81,7 @@ export default function AdminPage() {
     const results = await Promise.allSettled([
       getAdminDrivers(), getAdminPlanned(), getAdminEmployees(), getNewEmployees(),
       getAdminBuses(), getRoutes(), getCompanies(), getDepartments(), getJobs(), getHousing(),
-      getAdminTripReports(),
+      getAdminTripReports(), getAdminUsers(),
     ]);
     const vals = results.map((x) => (x.status === "fulfilled" ? x.value : undefined));
     const okCount = vals.filter((v) => v !== undefined).length;
@@ -99,6 +104,7 @@ export default function AdminPage() {
     setJobs(vals[8] ?? []);
     setHousing(vals[9] ?? []);
     setReports(vals[10] ?? []);
+    setUsers(vals[11] ?? (snap ? snap.drivers.map(mapSnapshotUsers) : []));
     mergeLocalPlans();
     applyOpsToState();
     if (!silent) {
@@ -184,6 +190,7 @@ export default function AdminPage() {
     const s = getCachedSnapshot() ?? null;
     if (!s) return;
     setDrivers(s.drivers.map(mapSnapshotDriver));
+    setUsers(s.drivers.map(mapSnapshotUsers));
     setPlans(s.planned.map(mapSnapshotPlanned));
     setEmployees(s.employees.map(mapSnapshotEmployee));
     setNewEmployees([]);
@@ -447,6 +454,21 @@ export default function AdminPage() {
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
   ];
 
+  const userColumns: CrudColumn[] = [
+    { key: "username", label: "اسم المستخدم" },
+    { key: "full_name", label: "الاسم" },
+    { key: "role", label: "الدور", render: (i) => <span className={`status ${i.role === "admin" ? "status-completed" : i.role === "supervisor" ? "status-needs_review" : "status-local"}`}>{ROLE_LABEL[i.role] ?? i.role}</span> },
+    { key: "is_active", label: "الحالة", render: (i) => YESNO(i.is_active) },
+  ];
+  const userFields: CrudField[] = [
+    { key: "username", label: "اسم المستخدم", required: true, createOnly: true },
+    { key: "full_name", label: "الاسم الكامل", required: true },
+    { key: "role", label: "الدور", type: "select", options: ROLE_OPTIONS, required: true, createOnly: true, help: "المدير: صلاحيات كاملة؛ المشرف: إدارة الرحلات والبيانات" },
+    { key: "password", label: "كلمة المرور", type: "password", required: true, createOnly: true, help: "8 أحرف فأكثر، حروف وأرقام" },
+    { key: "new_password", label: "كلمة مرور جديدة (اختياري)", type: "password", editOnly: true, help: "اتركه فارغاً لعدم تغييرها" },
+    { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
+  ];
+
   const employeeColumns: CrudColumn[] = [
     { key: "employee_code", label: "الكود", render: (i) => <strong>{i.employee_code}</strong> },
     { key: "name", label: "الاسم" },
@@ -602,6 +624,7 @@ export default function AdminPage() {
       <div className="admin-tabs">
         <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>الرحلات المخططة ({plans.length})</button>
         <button className={tab === "drivers" ? "active" : ""} onClick={() => setTab("drivers")}>السائقون ({drivers.length})</button>
+        <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>المستخدمون ({users.length})</button>
         <button className={tab === "employees" ? "active" : ""} onClick={() => setTab("employees")}>الموظفون ({employees.length})</button>
         <button className={tab === "buses" ? "active" : ""} onClick={() => setTab("buses")}>الباصات ({buses.length})</button>
         <button className={tab === "routes" ? "active" : ""} onClick={() => setTab("routes")}>الخطوط ({routes.length})</button>
@@ -651,6 +674,14 @@ export default function AdminPage() {
           items={drivers} columns={driverColumns} fields={driverFields}
           onSave={async (p, i) => { await localSave("driver", p, i, async (pp, iid) => { if (iid !== undefined) await updateDriver(String(iid), pp); else await addDriver(pp); }, "السائق"); }}
           onDelete={async id => { await localRemove("driver", id, async (iid) => { const res = await deleteDriver(String(iid)); afterAction(res.deactivated ? "السائق له رحلات سابقة — تم تعطيله بدلاً من الحذف" : "تم حذف السائق"); }); }}
+        />
+      )}
+
+      {tab === "users" && (
+        <CrudTable
+          title="المستخدمون" subtitle="جميع حسابات النظام (سائق/مشرف/أدمن) — تغيير كلمة مرور كل حساب تتم مستقلّة. إنشاء حساب جديد متاح للمدير."
+          items={users} columns={userColumns} fields={userFields}
+          onSave={async (p, i) => { if (i !== undefined) await updateAdminUser(String(i), p); else await addAdminUser(p); afterAction("تم حفظ المستخدم"); }}
         />
       )}
 
@@ -772,7 +803,7 @@ export default function AdminPage() {
           <div className="section-title" style={{ justifyContent: "space-between" }}>
             <div>
               <h2>رحلات السائقين المكتملة</h2>
-              <span>التقارير التي وصلت من أجهزة السائقين — تظهر هنا الرحلة وقائمة الموظفين لدى المشرف.</span>
+              <span>التقارير الواصلة من أجهزة السائقين — اضغط «عرض» لاستعراض الرحلة كاملة، مع الطباعة أو الإرسال عبر واتساب أو نسخ النص.</span>
             </div>
             <button className="secondary-btn" onClick={exportReports}><FileSpreadsheet size={16} /> تصدير Excel</button>
           </div>
@@ -780,7 +811,7 @@ export default function AdminPage() {
             <div className="table-scroll">
               <table>
                 <thead>
-                  <tr><th>الرحلة</th><th>السائق</th><th>الباص</th><th>الخط</th><th>الصاعدون</th><th>وصول التقرير</th><th>الحالة</th></tr>
+                  <tr><th>الرحلة</th><th>السائق</th><th>الباص</th><th>الخط</th><th>الصاعدون</th><th>وصول التقرير</th><th>الحالة</th><th>الإجراء</th></tr>
                 </thead>
                 <tbody>
                   {reports.map(r => {
@@ -796,16 +827,94 @@ export default function AdminPage() {
                         <td>{r.employee_count ?? 0}</td>
                         <td>{r.received_at ? new Date(r.received_at).toLocaleString("ar-EG") : "—"}</td>
                         <td><span className={`status ${st}`}>{reportStatusLabel(r.integration_status)}</span></td>
+                        <td>
+                          <button className="secondary-btn" onClick={() => setViewReport(r)}><Eye size={15} />عرض</button>
+                        </td>
                       </tr>
                     );
                   })}
                   {!reports.length && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>لا توجد تقارير بعد — ستظهر هنا الرحلات التي يُكملها السائقون ويرسلونها.</td></tr>
+                    <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>لا توجد تقارير بعد — ستظهر هنا الرحلات التي يُكملها السائقون ويرسلونها.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
+
+          {viewReport && (() => {
+            const { trip, employees } = reportTripOf(viewReport);
+            const route = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || viewReport.route || "—");
+            const f = (v: any) => (v ? new Date(v).toLocaleString("ar-EG") : "—");
+            const meta: Array<[string, string]> = [
+              ["السائق", viewReport.driver_name || viewReport.driver_username || "—"],
+              ["الباص", trip.bus_number || "—"],
+              ["الخط", route],
+              ...(trip.trip_type ? [["النوع", trip.trip_type] as [string, string]] : []),
+              ...(trip.company_code ? [["الشركة", trip.company_code] as [string, string]] : []),
+              ["الانطلاق المخطط", f(trip.scheduled_start_at)],
+              ["البداية", f(trip.started_at)],
+              ["الإكمال", f(trip.completed_at)],
+              ["وصول التقرير", f(viewReport.received_at)],
+              ["الحالة", reportStatusLabel(viewReport.integration_status)],
+            ];
+            return (
+              <div className="modal-backdrop" onClick={() => setViewReport(null)}>
+                <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+                  <div className="modal-head">
+                    <div>
+                      <div className="eyebrow">TRIP REPORT</div>
+                      <h2>تقرير رحلة {viewReport.trip_number}</h2>
+                    </div>
+                    <button className="icon-btn" onClick={() => setViewReport(null)}>×</button>
+                  </div>
+                  <div className="stack-lg">
+                    <div className="report-meta">
+                      {meta.map(([k, v]) => (
+                        <div className="report-meta-item" key={k}><span>{k}</span><strong>{v}</strong></div>
+                      ))}
+                    </div>
+                    <h3 className="report-list-title">الصاعدون ({employees.length})</h3>
+                    <div className="table-scroll" style={{ maxHeight: 260 }}>
+                      <table>
+                        <thead>
+                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>الحالة</th></tr>
+                        </thead>
+                        <tbody>
+                          {employees.map((p, i) => (
+                            <tr key={`${p.employee_code}-${i}`}>
+                              <td>{i + 1}</td>
+                              <td>{p.employee_code || "—"}</td>
+                              <td><strong>{p.name || "—"}</strong></td>
+                              <td>{p.department || "—"}</td>
+                              <td>{p.company || "—"}</td>
+                              <td>{p.housing_location || "—"}</td>
+                              <td>{reportEmployeeStatus(p)}</td>
+                            </tr>
+                          ))}
+                          {!employees.length && (
+                            <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="modal-actions" style={{ flexWrap: "wrap" }}>
+                      <button className="secondary-btn" onClick={() => openReportTripWhatsApp(viewReport)}><MessageCircle size={16} /> إرسال واتساب</button>
+                      <button className="secondary-btn" onClick={() => printTripReport(viewReport)}><Printer size={16} /> طباعة / PDF</button>
+                      <button className="secondary-btn" onClick={() => {
+                        try {
+                          navigator.clipboard.writeText(reportTripText(viewReport));
+                          setMsg("تم نسخ نص التقرير — الصقه في أي محادثة.");
+                        } catch {
+                          setMsg("تعذر النسخ التلقائي — استخدم «طباعة / PDF» أو «واتساب».");
+                        }
+                      }}><Copy size={16} /> نسخ النص</button>
+                      <button className="primary-btn" onClick={() => setViewReport(null)}>إغلاق</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
     </AppShell>

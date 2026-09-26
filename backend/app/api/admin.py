@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
-from app.schemas import AdminTripPlanCreate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
+from app.schemas import AdminTripPlanCreate, AdminUserCreate, AdminUserUpdate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
 from app.services.employees import import_employee_rows, parse_employee_rows
 from app.services.trips import ensure_bus, ensure_route
 
@@ -23,6 +23,72 @@ def planned_out(item: PlannedTrip) -> dict:
 @router.get("/drivers", response_model=list[UserOut])
 def drivers(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
     return db.scalars(select(User).where(User.role == UserRole.driver, User.is_active.is_(True)).order_by(User.full_name)).all()
+
+
+_MANAGED_ROLES = (UserRole.driver, UserRole.supervisor, UserRole.admin)
+
+
+def _user_out(u: User) -> dict:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "full_name": u.full_name,
+        "role": u.role.value if isinstance(u.role, UserRole) else str(u.role),
+        "driver_code": u.driver_code,
+        "company_code": u.company_code,
+        "is_active": u.is_active,
+        "must_change_password": u.must_change_password,
+    }
+
+
+@router.get("/users")
+def users(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
+    """كل حسابات النظام (سائق/مشرف/أدمن) لإدارة كلمة مرور كل حساب بشكل مستقل."""
+    rows = db.scalars(select(User).where(User.role.in_(_MANAGED_ROLES)).order_by(User.role, User.full_name)).all()
+    return [_user_out(u) for u in rows]
+
+
+@router.post("/users")
+def create_user(payload: AdminUserCreate, user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    """إضافة حساب مشرف/أدمن جديد (المدير فقط)."""
+    if db.scalar(select(User).where(User.username == payload.username)):
+        raise HTTPException(409, "اسم المستخدم موجود مسبقاً")
+    target = User(
+        username=payload.username,
+        full_name=payload.full_name,
+        password_hash=hash_password(payload.password),
+        role=UserRole(payload.role),
+        company_code=payload.company_code,
+    )
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    return _user_out(target)
+
+
+@router.put("/users/{user_id}")
+def update_user(
+    user_id: str,
+    payload: AdminUserUpdate,
+    user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    """تغيير كلمة مرور/اسم/حالة أي حساب (سائق/مشرف/أدمن) مستقلًا."""
+    target = db.get(User, user_id)
+    if not target or target.role not in _MANAGED_ROLES:
+        raise HTTPException(404, "المستخدم غير موجود")
+    if payload.full_name is not None:
+        target.full_name = payload.full_name
+    if payload.is_active is not None:
+        if target.id == user.id and not payload.is_active:
+            raise HTTPException(400, "لا يمكنك تعطيل حسابك الحالي")
+        target.is_active = payload.is_active
+    if payload.new_password:
+        target.password_hash = hash_password(payload.new_password)
+        target.must_change_password = False
+    db.commit()
+    db.refresh(target)
+    return _user_out(target)
 
 
 @router.post("/drivers", response_model=UserOut)

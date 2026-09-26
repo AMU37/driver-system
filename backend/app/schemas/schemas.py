@@ -215,6 +215,43 @@ class DriverUpdate(BaseModel):
         return value
 
 
+class AdminUserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=100)
+    full_name: str = Field(min_length=2, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    role: str = "supervisor"
+    company_code: str = "YCSR"
+
+    @field_validator("password")
+    @classmethod
+    def admin_user_password_strength(cls, value: str) -> str:
+        if not any(ch.isalpha() for ch in value) or not any(ch.isdigit() for ch in value):
+            raise ValueError(_PASSWORD_RULE)
+        return value
+
+    @field_validator("role")
+    @classmethod
+    def admin_user_role_allowed(cls, value: str) -> str:
+        if value not in ("supervisor", "admin"):
+            raise ValueError("الدور المسموح: مشرف أو أدمن")
+        return value
+
+
+class AdminUserUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=2, max_length=200)
+    is_active: bool | None = None
+    new_password: str | None = Field(default=None, min_length=8, max_length=200)
+
+    @field_validator("new_password")
+    @classmethod
+    def admin_user_update_password_strength(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not any(ch.isalpha() for ch in value) or not any(ch.isdigit() for ch in value)
+        ):
+            raise ValueError(_PASSWORD_RULE)
+        return value
+
+
 class BusCreate(BaseModel):
     number: str = Field(min_length=1, max_length=50)
     plate_number: str | None = Field(default=None, max_length=100)

@@ -138,6 +138,9 @@ export function transferTrip(id: number | string) { return request<any>(`/api/dr
 export function getNotifications() { return request<any[]>("/api/driver/notifications"); }
 export function getAdminDrivers() { return request<User[]>("/api/admin/drivers"); }
 export function addDriver(payload: any) { return request<User>("/api/admin/drivers", { method: "POST", body: JSON.stringify(payload) }); }
+export function getAdminUsers() { return request<any[]>("/api/admin/users"); }
+export function addAdminUser(payload: any) { return request<any>("/api/admin/users", { method: "POST", body: JSON.stringify(payload) }); }
+export function updateAdminUser(id: string, payload: any) { return request<any>(`/api/admin/users/${id}`, { method: "PUT", body: JSON.stringify(payload) }); }
 export function getAdminBuses() { return request<any[]>("/api/admin/buses"); }
 export function getAdminPlanned() { return request<PlannedTrip[]>("/api/admin/planned-trips"); }
 export function createAdminPlan(payload: any) { return request<PlannedTrip>("/api/admin/planned-trips", { method: "POST", body: JSON.stringify(payload) }); }
