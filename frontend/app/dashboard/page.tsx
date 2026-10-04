@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BusFront, CheckCircle2, Clock3, Download, RefreshCw, Route, Send, Users2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
-import { createManualTrip, getActiveLocalTrip, getAvailableBuses, getAvailableRoutes, getPlannedForDriver, isOnline, listLocalTrips, loadSnapshot, localStats, pendingSyncCount, refreshLiveData, syncNow, syncSnapshotFromServer, snapshotMeta, TRIP_LOCATIONS, TRIP_TYPES, type LocalTrip, type SnapshotBus, type SnapshotPlanned, type SnapshotRoute, type TripType } from "@/lib/offlineStore";
+import { completeLocalTrip, createManualTrip, getActiveLocalTrip, getAvailableBuses, getAvailableRoutes, getIncompleteLocalTrips, getPlannedForDriver, isOnline, listLocalTrips, loadSnapshot, localStats, pendingSyncCount, refreshLiveData, syncNow, syncSnapshotFromServer, snapshotMeta, TRIP_LOCATIONS, TRIP_TYPES, type LocalTrip, type SnapshotBus, type SnapshotPlanned, type SnapshotRoute, type TripType } from "@/lib/offlineStore";
 import { ActiveCard, PlannedCard } from "@/components/TripCard";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -10,6 +10,7 @@ import { routePath } from "@/lib/nav";
 export default function DashboardPage() {
   const user = useAuthGuard(["driver"]);
   const [active, setActive] = useState<LocalTrip | null>(null);
+  const [openTrips, setOpenTrips] = useState<LocalTrip[]>([]);
   const [upcoming, setUpcoming] = useState<SnapshotPlanned[]>([]);
   const [stats, setStats] = useState({ today_total: 0, completed: 0, synced: 0, active_count: 0 });
   const [pending, setPending] = useState(0);
@@ -32,6 +33,7 @@ export default function DashboardPage() {
   const refresh = useCallback(() => {
     if (!user) return;
     setActive(getActiveLocalTrip(user.username));
+    setOpenTrips(getIncompleteLocalTrips(user.username));
     setUpcoming(getPlannedForDriver(user.username, user.driver_code).slice(0, 10));
     setStats(localStats(user.username));
     setPending(pendingSyncCount(user.username));
@@ -74,6 +76,28 @@ export default function DashboardPage() {
     }
   }
 
+  async function completeOpenTrip(t: LocalTrip) {
+    if (!user) return;
+    setMsg("");
+    setError("");
+    try {
+      const done = completeLocalTrip(t.id, user.username);
+      if (!done) {
+        setFormErr("تعذر إكمال الرحلة — حاول مرة أخرى");
+        return;
+      }
+      if (isOnline()) {
+        const r = await syncNow(user.username);
+        setMsg(r.pushed ? `تم إكمال الرحلة ${t.trip_number} وإرسالها إلى النظام` : `تم إكمال الرحلة ${t.trip_number} — بانتظار الإرسال`);
+        if (r.lastError) setError(r.lastError);
+      } else {
+        setMsg(`تم إكمال الرحلة ${t.trip_number} — ستُرسل عند توفر الاتصال`);
+      }
+    } finally {
+      refresh();
+    }
+  }
+
   async function doSync() {
     if (!user || syncing) return;
     setSyncing(true);
@@ -91,6 +115,12 @@ export default function DashboardPage() {
 
   async function startCreate() {
     if (!user) return;
+    const open = getIncompleteLocalTrips(user.username);
+    if (open.length) {
+      setShowCreate(false);
+      setFormErr(`لديك رحلة غير مكتملة (${open[0].trip_number}) — أكملها أولاً قبل بدء رحلة جديدة`);
+      return;
+    }
     if (!routeLine.trim() || !bus) {
       setFormErr("أدخل رقم الباص وخط السير");
       return;
@@ -105,6 +135,7 @@ export default function DashboardPage() {
         routeLine: routeLine.trim(),
         busNumber: bus,
         tripType,
+        driverCode: user.driver_code || user.username,
         origin: selected?.origin || undefined,
         destination: selected?.destination || undefined,
       });
@@ -130,7 +161,14 @@ export default function DashboardPage() {
           <p>كل ما تحتاجه لتشغيل الرحلة من شاشة واحدة.</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <button className="primary-btn" onClick={() => { setBuses(getAvailableBuses()); setRoutes(getAvailableRoutes(user?.company_code || null)); setFormErr(""); setShowCreate(true); }}><Route size={18} style={{ verticalAlign: "-3px" }}/> بدء الرحلة</button>
+          <button className="primary-btn" onClick={() => {
+          const open = getIncompleteLocalTrips(user?.username || "");
+          if (open.length) {
+            setFormErr(`لديك رحلة غير مكتملة (${open[0].trip_number}) — أكملها أولاً قبل بدء رحلة جديدة`);
+            return;
+          }
+          setBuses(getAvailableBuses()); setRoutes(getAvailableRoutes(user?.company_code || null)); setFormErr(""); setShowCreate(true);
+        }}><Route size={18} style={{ verticalAlign: "-3px" }}/> بدء الرحلة</button>
           <button className="secondary-btn" onClick={() => updateData(false)} disabled={updating}><Download size={18} style={{ verticalAlign: "-3px" }}/> {updating ? "جارٍ التحديث..." : "تحديث البيانات"}</button>
           <div className={`online-pill ${online ? "" : "offline"}`}><span className="live-dot"></span>{online ? "متصل" : "بدون إنترنت"}</div>
         </div>
@@ -138,6 +176,21 @@ export default function DashboardPage() {
       </div>
     {error && <div className="alert danger">{error}</div>}
     {msg && <div className="alert success">{msg}</div>}
+    {formErr && !showCreate && <div className="alert danger">{formErr}</div>}
+    {openTrips.length > 0 && (
+      <div className="alert danger">
+        <strong>لا يمكن بدء رحلة جديدة قبل إكمال الرحلة السابقة.</strong>
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+          {openTrips.map(t => (
+            <div key={t.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span>رحلة <strong>{t.trip_number}</strong> — {t.passengers.length} راكب — بدأت {new Date(t.started_at).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" })}</span>
+              <button className="secondary-btn" onClick={() => window.location.assign(routePath(`/trip?id=${encodeURIComponent(t.id)}`))}>فتح الرحلة</button>
+              <button className="primary-btn" onClick={() => completeOpenTrip(t)}>إكمال الرحلة الآن</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
     {pending > 0 && (
       <button className="primary-btn full" onClick={doSync} disabled={syncing}>
         <Send size={18} style={{ verticalAlign: "-3px" }} /> {syncing ? "جارٍ الإرسال..." : `إرسال الرحلات المكتملة (${pending})`}

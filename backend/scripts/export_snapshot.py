@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -93,8 +93,8 @@ def main():
             "external_id": r["external_id"],
             "trip_number": r["trip_number"],
             "driver_id": r["driver_id"],
-            "driver_username": r["u"] and r["u"][0],
-            "driver_full_name": r["u"] and r["u"][1],
+            "driver_username": r["u"],
+            "driver_full_name": r["u"],
             "company_code": r["company_code"],
             "bus_number": r["bus_number"],
             "route_name": r["route_name"],
@@ -124,8 +124,9 @@ def main():
             "external_id": r["external_id"],
             "trip_number": r["trip_number"],
             "driver_id": r["driver_id"],
-            "driver_username": r["u"],
-            "driver_full_name": r["u"],
+            "driver_username": r["u0"],
+            "driver_full_name": r["u1"],
+            "driver_code": r["u2"],
             "company_code": r["company_code"],
             "bus_number": r["bus_number"],
             "route_name": r["route_name"],
@@ -142,7 +143,7 @@ def main():
             SELECT p.id, p.external_id, p.trip_number, p.driver_id, p.company_code,
                    p.trip_date, p.release_at, p.scheduled_start_at, p.status, p.trip_type,
                    b.number AS bus_number, ro.name AS route_name, ro.origin, ro.destination,
-                   u.username AS u
+                   u.username AS u0, u.full_name AS u1, u.driver_code AS u2
             FROM planned_trips p
             LEFT JOIN buses b ON b.id = p.bus_id
             LEFT JOIN routes ro ON ro.id = p.route_id

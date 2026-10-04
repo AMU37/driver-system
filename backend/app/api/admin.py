@@ -163,7 +163,7 @@ def create_plan(payload: AdminTripPlanCreate, user: User = Depends(require_roles
     status = TripStatus.available if datetime.now(timezone.utc) >= release_at else TripStatus.planned
     item: PlannedTrip | None = None
     for _ in range(5):
-        trip_number = next_trip_number(db, bus_number=payload.bus_number, company_code=company_code, when=scheduled, trip_type=trip_type)
+        trip_number = next_trip_number(db, bus_number=payload.bus_number, company_code=company_code, driver_code=driver.driver_code or payload.driver_code, when=scheduled, trip_type=trip_type)
         item = PlannedTrip(
             trip_number=trip_number,
             driver_id=driver.id,

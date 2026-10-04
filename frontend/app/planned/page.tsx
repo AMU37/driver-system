@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
-import { getPlannedForDriver, isOnline, loadSnapshot, refreshLiveData, startLocalTrip, type SnapshotPlanned } from "@/lib/offlineStore";
+import { getIncompleteLocalTrips, getPlannedForDriver, isOnline, loadSnapshot, refreshLiveData, startLocalTrip, type SnapshotPlanned } from "@/lib/offlineStore";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -26,6 +26,11 @@ setItems(getPlannedForDriver(user.username, user.driver_code));
   }, [user]);
   async function start() {
     if (!selected || !user) return;
+    const open = getIncompleteLocalTrips(user.username);
+    if (open.length) {
+      setError(`لديك رحلة غير مكتملة (${open[0].trip_number}) — أكملها أولاً قبل بدء رحلة جديدة`);
+      return;
+    }
     setLoading(true);
     try {
       const trip = startLocalTrip(selected, user.username, bus);

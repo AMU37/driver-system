@@ -88,18 +88,62 @@ export function reportsToXlsText(reports: any[]): string {
 }
 
 export function downloadContent(filename: string, content: string, mime: string) {
-  const blob = new Blob(["\ufeff" + content], { type: `${mime};charset=utf-8` });
   if (isNativePlatform()) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        window.open(String(reader.result), "_system", "noopener");
-      } catch {
-        /* ignore */
-      }
-    };
-    reader.readAsDataURL(blob);
-  } else {
+    // روابط blob:/data: لا تعمل في المتصفح الخارجي، فنسلّم الملف للتطبيق ليحفظه ويفتحه.
+    saveFileNative(filename, content, mime);
+    return;
+  }
+  const blob = new Blob(["\ufeff" + content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
+/** واجهة أصلية حقنها MainActivity — لا علانية لها في نسخة المتصفح. */
+type DriverAppBridge = {
+  canPrint?: () => boolean;
+  printHtml?: (jobName: string, html: string) => void;
+  openFile?: (fileName: string, mime: string, base64: string) => void;
+  shareText?: (subject: string, text: string) => void;
+  notify?: (message: string) => void;
+};
+
+function nativeBridge(): DriverAppBridge | null {
+  if (typeof window === "undefined") return null;
+  const b = (window as unknown as { DriverApp?: DriverAppBridge }).DriverApp;
+  return b && typeof b === "object" ? b : null;
+}
+
+/** true إذا كان التطبيق الأصلي يملك جسر الطباعة — لعرض رسالة بديلة عند غيابه. */
+export function canPrintReport(): boolean {
+  const b = nativeBridge();
+  return !!b && typeof b.printHtml === "function";
+}
+
+function toBase64(content: string): string {
+  const bytes = new TextEncoder().encode("\ufeff" + content);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+function saveFileNative(filename: string, content: string, mime: string) {
+  const b = nativeBridge();
+  if (b && typeof b.openFile === "function") {
+    b.openFile(filename, mime, toBase64(content));
+    return;
+  }
+  if (typeof window !== "undefined") {
+    // احتياطي: نافذة المتصفح المعتادة (تعمل على الويب)
+    const blob = new Blob(["\ufeff" + content], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -108,7 +152,56 @@ export function downloadContent(filename: string, content: string, mime: string)
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 3000);
+    return;
   }
+  // نسخة أصلية بلا جسر: لا نفتح نافذة خارجية، نعرض المسار فقط
+  if (b && typeof b.notify === "function") b.notify("تصدير الملفات غير متاح في هذه النسخة");
+}
+
+/**
+ * طباعة التقرير بدون أي نافذة جديدة داخل WebView.
+ * التطبيق الأصلي يستدعي نافذة طباعة النظام (حفظ PDF) — يمكن العودة منها بزر الرجوع.
+ */
+export function printReport(jobName: string, html: string): boolean {
+  const b = nativeBridge();
+  if (b && typeof b.printHtml === "function") {
+    b.printHtml(jobName, html);
+    return true;
+  }
+  if (isNativePlatform()) {
+    // احتياطي: طباعة داخل نفس الـ WebView عبر iframe مخفي — لا للمستخدم مخرج من التطبيق
+    let frame = document.getElementById("print-frame") as HTMLIFrameElement | null;
+    if (!frame) {
+      frame = document.createElement("iframe");
+      frame.id = "print-frame";
+      frame.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;border:0;visibility:hidden;";
+      document.body.appendChild(frame);
+    }
+    const doc = frame.contentDocument;
+    if (!doc) return false;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(() => {
+      try {
+        frame?.contentWindow?.focus();
+        frame?.contentWindow?.print();
+      } catch {
+        /* تجاهل */
+      }
+    }, 300);
+    return true;
+  }
+  const w = window.open("", "_blank");
+  if (!w) return false;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => {
+    w.focus();
+    w.print();
+  }, 350);
+  return true;
 }
 
 export function tripText(trip: LocalTrip): string {
@@ -146,8 +239,6 @@ export function openWhatsApp(trip: LocalTrip) {
 }
 
 export function printTripPdf(trip: LocalTrip) {
-  const w = window.open("", "_blank");
-  if (!w) return;
   const rows = trip.passengers
     .map(
       (p, i) =>
@@ -173,13 +264,7 @@ export function printTripPdf(trip: LocalTrip) {
 <table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة/الجهة</th><th>الشركة</th><th>الغرض</th><th>الحالة</th></tr></thead>
 <tbody>${rows}</tbody></table>
 </body></html>`;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  setTimeout(() => {
-    w.focus();
-    w.print();
-  }, 350);
+  return printReport(`رحلة ${trip.trip_number}`, html);
 }
 
 /* ---- تنسيق تقارير الرحلات الواصلة من السائقين (للمشرف/المدير) ---- */
@@ -236,8 +321,6 @@ export function openReportTripWhatsApp(report: any) {
 
 export function printTripReport(report: any) {
   const { trip, employees } = reportTripOf(report);
-  const w = window.open("", "_blank");
-  if (!w) return;
   const rows = employees
     .map(
       (p, i) =>
@@ -263,11 +346,5 @@ export function printTripReport(report: any) {
 <table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الوظيفة</th><th>السكن</th><th>الحالة</th></tr></thead>
 <tbody>${rows}</tbody></table>
 </body></html>`;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  setTimeout(() => {
-    w.focus();
-    w.print();
-  }, 350);
+  return printReport(`رحلة ${report.trip_number}`, html);
 }

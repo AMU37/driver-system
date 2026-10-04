@@ -17,6 +17,10 @@ export function tripTypeCode(value: string | null | undefined): string {
 export function normalizeTripType(value: string | null | undefined): TripType {
   return tripTypeCode(value) === "Q" ? "قادم" : "مغادر";
 }
+/** كود السائق داخل رقم الرحلة — نفس تنظيف backend/app/services/numbering.py */
+export function driverSegment(value: string | null | undefined): string {
+  return ((value || "").trim().replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 10)) || "NA";
+}
 
 export type SnapshotEmployee = {
   id: number;
@@ -32,6 +36,7 @@ export type SnapshotBus = { id: number; number: string; plate_number?: string | 
 export type SnapshotDriver = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string };
 export type SnapshotPlanned = {
   id: number; external_id?: string | null; trip_number: string; driver_id: string; driver_username?: string | null;
+  driver_code?: string | null;
   company_code: string; bus_number?: string | null; route_name?: string | null; origin?: string | null; destination?: string | null;
   trip_type?: string | null;
   trip_date?: string | null; release_at?: string | null; scheduled_start_at: string; status: string;
@@ -450,6 +455,7 @@ export function getPlannedForDriver(driverUsername: string, driverCode?: string 
 }
 
 export function startLocalTrip(planned: SnapshotPlanned, driverUsername: string, actualBus?: string): LocalTrip {
+  assertNoIncompleteTrip(driverUsername);
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip: LocalTrip = {
     id: "LT-" + uuid().slice(0, 8),
@@ -504,16 +510,48 @@ function companyNameFor(code: string): string | null {
  * رحلات الجهاز نفسها + الرحلات المخططة (الحيّة واللقطة والمخططة محلياً).
  * المولّد لا يكسر أبداً عند التعارض: يرتفع التسلسل حتى يجد رقماً حراً.
  */
+/**
+ * يولّد رقم رحلة بنفس صيغة الخادم:
+ * TR-{bus}-{YYYYMMDD}-{company}-{DRIVER}-{M|Q}-{NNN}
+ * التسلسل يتبع السائق (يوم + شركة + سائق + نوع) ويتجاوز اختلاف الباص.
+ */
+export function buildTripNumber(bus: string, date: string, company: string, driver: string, code: string, seq: number): string {
+  return `TR-${bus}-${date}-${company}-${driver}-${code}-${String(seq).padStart(3, "0")}`;
+}
+
+/** الرحلات غير المكتملة (boarding) — لا يجوز أن يزيد عددها عن واحدة لكل سائق. */
+export function getIncompleteLocalTrips(driverUsername: string): LocalTrip[] {
+  return loadJSON<LocalTrip[]>(KEY_TRIPS, [])
+    .filter((t) => t.driver_username === driverUsername && t.status === "boarding")
+    .sort((a, b) => (a.started_at || "").localeCompare(b.started_at || ""));
+}
+
+/**
+ * يمنع بدء رحلة جديدة ما دامت هناك رحلة غير مكتملة، ويرمي رسالة واضحة
+ * بدل أن يعلق السائق في رحلة قديمة دون مخرج.
+ */
+export function assertNoIncompleteTrip(driverUsername: string): void {
+  const open = getIncompleteLocalTrips(driverUsername);
+  if (open.length) {
+    const t = open[0];
+    throw new Error(
+      `لديك رحلة غير مكتملة (${t.trip_number}) بـ${t.passengers.length} راكب — أكملها أولاً قبل بدء رحلة جديدة`
+    );
+  }
+}
+
 export function createManualTrip(input: {
   driverUsername: string;
   companyCode: string;
   routeLine: string;
   busNumber: string;
   tripType: TripType;
+  driverCode?: string | null;
   origin?: string;
   destination?: string;
   scheduledStartAt?: string;
 }): LocalTrip {
+  assertNoIncompleteTrip(input.driverUsername);
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const parts = (input.routeLine || "").split("→");
   const origin = (input.origin || parts[0] || input.routeLine || "").trim();
@@ -525,6 +563,7 @@ export function createManualTrip(input: {
   const busKey = (input.busNumber || "").trim() || "000";
   const companyKey = (input.companyCode || "").trim() || "YCSR";
   const code = tripTypeCode(input.tripType);
+  const driverKey = driverSegment(input.driverCode || input.driverUsername);
 
   const localDate = (iso?: string | null) => {
     if (!iso) return "";
@@ -532,12 +571,13 @@ export function createManualTrip(input: {
     if (Number.isNaN(d.getTime())) return "";
     return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   };
-  const prefix = `TR-${busKey}-${datePart}-${companyKey}-${code}-`;
+  // النطاق = (يوم + شركة + سائق + نوع) والباص مفتوح، فيت��بع السائق تسلسله عبر الباصات.
+  const scope = new RegExp(`^TR-[^-]*-${datePart}-${companyKey}-${driverKey}-${code}-(\\d+)$`);
   let highest = 0;
   const bump = (number?: string | null) => {
-    if (!number || !number.startsWith(prefix)) return;
-    const tail = number.slice(prefix.length);
-    if (/^\d+$/.test(tail)) highest = Math.max(highest, parseInt(tail, 10));
+    if (!number) return;
+    const m = scope.exec(number);
+    if (m) highest = Math.max(highest, parseInt(m[1], 10));
   };
   list.forEach((t) => {
     if (localDate(t.scheduled_start_at || t.started_at) === datePart) bump(t.trip_number);
@@ -548,11 +588,11 @@ export function createManualTrip(input: {
   });
 
   let seq = highest + 1;
-  let tripNumber = `${prefix}${String(seq).padStart(3, "0")}`;
+  let tripNumber = buildTripNumber(busKey, datePart, companyKey, driverKey, code, seq);
   const taken = new Set(list.map((t) => t.trip_number));
   while (taken.has(tripNumber)) {
     seq += 1;
-    tripNumber = `${prefix}${String(seq).padStart(3, "0")}`;
+    tripNumber = buildTripNumber(busKey, datePart, companyKey, driverKey, code, seq);
   }
 
   const trip: LocalTrip = {
