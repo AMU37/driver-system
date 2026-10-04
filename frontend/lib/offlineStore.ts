@@ -306,7 +306,10 @@ export async function tryOnlineLogin(username: string, password: string): Promis
       }
       return { ok: true, user };
     }
-    return { ok: false, code: res.status === 401 ? "unauthorized" : "unreachable" };
+    // 429 يعني محاولات كثيرة مؤقتاً، وليس بيانات خاطئة: نعامله كتعذر اتصال
+    // حتى لا نمنع السائق من استخدام رمز PIN المحلي على هذا الجهاز.
+    const code = res.status === 401 ? "unauthorized" : "unreachable";
+    return { ok: false, code };
   } catch {
     return { ok: false, code: "unreachable" };
   }

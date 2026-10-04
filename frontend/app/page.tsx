@@ -50,29 +50,31 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await tryOnlineLogin(username, password);
+      const name = username.trim();
+      const res = await tryOnlineLogin(name, password);
       if (res.ok) {
         go(home(res.user));
         return;
       }
-      if (res.code === "unauthorized") {
+      await loadSnapshot();
+      const account = findDriver(name) || findLocalDriverAccount(name);
+      if (!account) {
+        setError(
+          res.code === "unauthorized"
+            ? "اسم المستخدم أو كلمة المرور غير صحيحة"
+            : "تعذر التحقق من الحساب دون اتصال. تأكد من اسم المستخدم أو عُد عند توفر الشبكة."
+        );
+        return;
+      }
+      // كلمة المرور مرفوضة من الخادم: نسمح فقط برمز PIN موجود مسبقاً على هذا الجهاز.
+      // لا نسمح بإنشاء رمز PIN جديد هنا، وإلا يصبح اسم المستخدم وحده كافياً لتجاوز كلمة المرور.
+      if (res.code === "unauthorized" && !hasLocalPin(account.username)) {
         setError("اسم المستخدم أو كلمة المرور غير صحيحة");
         return;
       }
-      await loadSnapshot();
-      const driver = findDriver(username.trim()) || findLocalDriverAccount(username.trim());
-      if (!driver) {
-        setError("تعذر التحقق من الحساب دون اتصال. تأكد من اسم المستخدم أو عُد عند توفر الشبكة.");
-        return;
-      }
-      setPending(driver);
-      if (hasLocalPin(driver.username)) {
-        setPhase("verify_pin");
-        setPins(["", ""]);
-      } else {
-        setPhase("set_pin");
-        setPins(["", ""]);
-      }
+      setPending(account);
+      setPins(["", ""]);
+      setPhase(hasLocalPin(account.username) ? "verify_pin" : "set_pin");
     } catch {
       setError("تعذر الاتصال بالخادم. حاول مجدداً.");
     } finally {
