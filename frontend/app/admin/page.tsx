@@ -29,7 +29,7 @@ const ROLE_OPTIONS = [{ value: "supervisor", label: "مشرف" }, { value: "admi
 const mapSnapshotDriver = (d: any) => ({ id: d.id, driver_code: d.driver_code ?? "", username: d.username, full_name: d.full_name, role: d.role, company_code: d.company_code, is_active: true });
 const mapSnapshotUsers = (u: any) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, driver_code: u.driver_code ?? "", company_code: u.company_code ?? "", is_active: true, must_change_password: false });
 const mapSnapshotPlanned = (p: any) => ({ ...p, driver_username: p.driver_username ?? "", status: p.status ?? "planned", trip_number: p.trip_number ?? String(p.id), trip_date: p.trip_date ?? "" });
-const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", is_active: e.is_active });
+const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", work_schedule: e.work_schedule ?? "", schedule_desc: e.schedule_desc ?? "", work_days: e.work_days ?? null, rest_days: e.rest_days ?? null, first_work_day: e.first_work_day ?? "", rotation_status: e.rotation_status ?? "", departure_time: e.departure_time ?? "", gender: e.gender ?? "", service_type: e.service_type ?? "", transport_type: e.transport_type ?? "", cycle_day_today: e.cycle_day_today ?? null, base_status_today: e.base_status_today ?? "", cycle_day_tomorrow: e.cycle_day_tomorrow ?? null, is_active: e.is_active });
 const mapSnapshotBus = (b: any) => ({ id: b.id, number: b.number, plate_number: b.plate_number ?? "", capacity: b.capacity, company_code: b.company_code, is_active: b.is_active });
 const mapSnapshotRoute = (r: any) => ({ id: r.id, name: r.name, origin: r.origin ?? "", destination: r.destination ?? "", company_code: r.company_code, is_active: r.is_active });
 
@@ -490,6 +490,24 @@ export default function AdminPage() {
     { key: "company_name", label: "الشركة / السكن", render: (i) => (
       <span className="stack-cell"><strong>{DASH(i.company_name)}</strong><small>{DASH(i.housing_location)}</small></span>
     ) },
+    { key: "schedule", label: "نظام الدوام", render: (i) => (
+      <span className="stack-cell">
+        <strong>{DASH(i.schedule_desc || i.work_schedule)}</strong>
+        {i.work_schedule && <small>جدول {i.work_schedule}</small>}
+      </span>
+    ) },
+    { key: "rotation_status", label: "الدورة", render: (i) => (
+      <span className="stack-cell">
+        <strong>{DASH(i.rotation_status)}</strong>
+        {(i.work_days !== null && i.work_days !== undefined) && <small>{i.work_days} عمل / {i.rest_days ?? 0} راحة</small>}
+      </span>
+    ) },
+    { key: "today", label: "حالة اليوم", render: (i) => (
+      <span className="stack-cell">
+        <strong>{DASH(i.base_status_today)}</strong>
+        {i.cycle_day_today !== null && i.cycle_day_today !== undefined && <small>يركب اليوم ({i.cycle_day_today}) / غداً ({i.cycle_day_tomorrow ?? "—"})</small>}
+      </span>
+    ) },
     { key: "is_active", label: "الحالة", render: (i) => YESNO(i.is_active) },
   ];
   const employeeFields: CrudField[] = [
@@ -499,6 +517,19 @@ export default function AdminPage() {
     { key: "department_name", label: "الإدارة" },
     { key: "company_name", label: "الشركة", type: "select", options: companyNameOptions },
     { key: "housing_location", label: "السكن", type: "select", options: housingNameOptions },
+    { key: "work_schedule", label: "جدول العمل" },
+    { key: "schedule_desc", label: "شرح نوع الدوام" },
+    { key: "work_days", label: "عدد أيام العمل", type: "number" },
+    { key: "rest_days", label: "عدد أيام الراحة", type: "number" },
+    { key: "first_work_day", label: "تاريخ أول يوم عمل" },
+    { key: "rotation_status", label: "الحالة الدورية للموظف" },
+    { key: "departure_time", label: "وقت المغادرة" },
+    { key: "gender", label: "نوع الجنس" },
+    { key: "service_type", label: "نوع الخدمة" },
+    { key: "transport_type", label: "تصنيف النقل (يومي/دوري)" },
+    { key: "cycle_day_today", label: "يوم الدورة اليوم", type: "number" },
+    { key: "base_status_today", label: "الحالة الأساسية اليوم" },
+    { key: "cycle_day_tomorrow", label: "يوم الدورة غداً", type: "number" },
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
   ];
 
@@ -706,7 +737,7 @@ export default function AdminPage() {
                 <Upload size={22} />
                 <div>
                   <h2>استيراد ملف الموظفين</h2>
-                  <span>رفع ملف CSV أو Excel. الأعمدة: كود الموظف، الاسم، الوظيفة، الإدارة، الشركة، السكن.</span>
+                  <span>ارفع ملف «كشف الموظفين مع نظام الدوام» (CSV/Excel) — يشمل: الكود، الاسم، الإدارة، الوظيفة، الشركة، السكن، جدول العمل، شرح نوع الدوام، أيام العمل/الراحة، الدورة، وقت المغادرة، نوع الخدمة، تصنيف النقل، دورة اليوم وغداً.</span>
                 </div>
               </div>
             </div>
@@ -855,7 +886,7 @@ export default function AdminPage() {
           </div>
 
           {viewReport && (() => {
-            const { trip, employees } = reportTripOf(viewReport);
+            const { trip, employees: reportEmployees } = reportTripOf(viewReport);
             const route = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || viewReport.route || "—");
             const f = (v: any) => (v ? new Date(v).toLocaleString("ar-EG") : "—");
             const meta: Array<[string, string]> = [
@@ -870,6 +901,21 @@ export default function AdminPage() {
               ["وصول التقرير", f(viewReport.received_at)],
               ["الحالة", reportStatusLabel(viewReport.integration_status)],
             ];
+            const scheduleOf = (empCode: string) => employees.find((e) => e.employee_code === empCode) || null;
+            const scheduleCell = (empCode: string) => {
+              const s = scheduleOf(empCode);
+              if (!s) return <small className="muted">غير مسجّل في الكشف</small>;
+              if (!s.work_schedule && !s.schedule_desc && s.rotation_status === "") return <small className="muted">بدون خطة دوام</small>;
+              const bits: string[] = [];
+              if (s.schedule_desc) bits.push(s.schedule_desc);
+              else if (s.work_schedule) bits.push(`جدول ${s.work_schedule}`);
+              if (s.rotation_status) bits.push(s.rotation_status);
+              if (s.base_status_today) bits.push(`اليوم: ${s.base_status_today}`);
+              if (s.cycle_day_today !== null && s.cycle_day_today !== undefined) bits.push(`دورة اليوم ${s.cycle_day_today} / غداً ${s.cycle_day_tomorrow ?? "—"}`);
+              if (s.work_days !== null && s.work_days !== undefined) bits.push(`${s.work_days} عمل / ${s.rest_days ?? 0} راحة`);
+              if (s.departure_time) bits.push(`مغادرة ${s.departure_time}`);
+              return <span className="stack-cell"><strong>{bits[0] || "—"}</strong>{bits.slice(1).map((b, i) => <small key={i}>{b}</small>)}</span>;
+            };
             return (
               <div className="modal-backdrop" onClick={() => setViewReport(null)}>
                 <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
@@ -886,14 +932,14 @@ export default function AdminPage() {
                         <div className="report-meta-item" key={k}><span>{k}</span><strong>{v}</strong></div>
                       ))}
                     </div>
-                    <h3 className="report-list-title">الصاعدون ({employees.length})</h3>
+                    <h3 className="report-list-title">الصاعدون ({reportEmployees.length}) — المطابقة مع خطة دوام كل موظف</h3>
                     <div className="table-scroll" style={{ maxHeight: 260 }}>
                       <table>
                         <thead>
-                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>الحالة</th></tr>
+                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>خطة الدوام (للمقارنة)</th><th>الحالة</th></tr>
                         </thead>
                         <tbody>
-                          {employees.map((p, i) => (
+                          {reportEmployees.map((p, i) => (
                             <tr key={`${p.employee_code}-${i}`}>
                               <td>{i + 1}</td>
                               <td>{p.employee_code || "—"}</td>
@@ -901,11 +947,12 @@ export default function AdminPage() {
                               <td>{p.department || "—"}</td>
                               <td>{p.company || "—"}</td>
                               <td>{p.housing_location || "—"}</td>
+                              <td>{p.employee_code ? scheduleCell(p.employee_code) : <small className="muted">غير موظف</small>}</td>
                               <td>{reportEmployeeStatus(p)}</td>
                             </tr>
                           ))}
-                          {!employees.length && (
-                            <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
+                          {!reportEmployees.length && (
+                            <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
                           )}
                         </tbody>
                       </table>

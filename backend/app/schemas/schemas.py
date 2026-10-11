@@ -52,6 +52,19 @@ class EmployeeLookup(BaseModel):
     department_name: str | None = None
     company_name: str | None = None
     housing_location: str | None = None
+    work_schedule: str | None = None
+    schedule_desc: str | None = None
+    work_days: int | None = None
+    rest_days: int | None = None
+    first_work_day: str | None = None
+    rotation_status: str | None = None
+    departure_time: str | None = None
+    gender: str | None = None
+    service_type: str | None = None
+    transport_type: str | None = None
+    cycle_day_today: int | None = None
+    base_status_today: str | None = None
+    cycle_day_tomorrow: int | None = None
     is_active: bool
 
 
@@ -189,6 +202,19 @@ class EmployeeSyncItem(BaseModel):
     department_name: str | None = None
     company_name: str | None = None
     housing_location: str | None = None
+    work_schedule: str | None = None
+    schedule_desc: str | None = None
+    work_days: int | None = None
+    rest_days: int | None = None
+    first_work_day: str | None = None
+    rotation_status: str | None = None
+    departure_time: str | None = None
+    gender: str | None = None
+    service_type: str | None = None
+    transport_type: str | None = None
+    cycle_day_today: int | None = None
+    base_status_today: str | None = None
+    cycle_day_tomorrow: int | None = None
     is_active: bool = True
 
 
@@ -203,6 +229,19 @@ class EmployeeCreate(BaseModel):
     department_name: str | None = Field(default=None, max_length=200)
     company_name: str | None = Field(default=None, max_length=200)
     housing_location: str | None = Field(default=None, max_length=200)
+    work_schedule: str | None = Field(default=None, max_length=100)
+    schedule_desc: str | None = Field(default=None, max_length=200)
+    work_days: int | None = None
+    rest_days: int | None = None
+    first_work_day: str | None = Field(default=None, max_length=50)
+    rotation_status: str | None = Field(default=None, max_length=100)
+    departure_time: str | None = Field(default=None, max_length=50)
+    gender: str | None = Field(default=None, max_length=30)
+    service_type: str | None = Field(default=None, max_length=100)
+    transport_type: str | None = Field(default=None, max_length=100)
+    cycle_day_today: int | None = None
+    base_status_today: str | None = Field(default=None, max_length=100)
+    cycle_day_tomorrow: int | None = None
     is_active: bool = True
 
 
@@ -213,6 +252,19 @@ class EmployeeUpdate(BaseModel):
     department_name: str | None = Field(default=None, max_length=200)
     company_name: str | None = Field(default=None, max_length=200)
     housing_location: str | None = Field(default=None, max_length=200)
+    work_schedule: str | None = Field(default=None, max_length=100)
+    schedule_desc: str | None = Field(default=None, max_length=200)
+    work_days: int | None = None
+    rest_days: int | None = None
+    first_work_day: str | None = Field(default=None, max_length=50)
+    rotation_status: str | None = Field(default=None, max_length=100)
+    departure_time: str | None = Field(default=None, max_length=50)
+    gender: str | None = Field(default=None, max_length=30)
+    service_type: str | None = Field(default=None, max_length=100)
+    transport_type: str | None = Field(default=None, max_length=100)
+    cycle_day_today: int | None = None
+    base_status_today: str | None = Field(default=None, max_length=100)
+    cycle_day_tomorrow: int | None = None
     is_active: bool | None = None
 
 

@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { BookOpen, BusFront, CalendarClock, History, LayoutDashboard, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
 import { logout } from "@/lib/api";
-import { clearLocalSession } from "@/lib/offlineStore";
+import { autoPushPending, clearLocalSession } from "@/lib/offlineStore";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
 
@@ -25,6 +26,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const user = useAuthGuard();
   const isAdmin = user && (user.role === "admin" || user.role === "supervisor");
   const nav = isAdmin ? adminItems : driverItems;
+  useEffect(() => {
+    if (!user || user.role !== "driver") return;
+    const username = user.username;
+    const run = () => { autoPushPending(username).catch(() => {}); };
+    run();
+    window.addEventListener("online", run);
+    return () => window.removeEventListener("online", run);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.username]);
   return (
     <div className="app-shell">
       <aside className="sidebar">

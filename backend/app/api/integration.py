@@ -44,19 +44,22 @@ def receive_planned_trip(payload: PlannedTripImport, _: None = Depends(require_i
 def sync_employees(payload: EmployeeSyncPayload, _: None = Depends(require_inbound_key), db: Session = Depends(get_db)):
     created = 0
     updated = 0
+    _SCHEDULE_FIELDS = (
+        "job_title", "department_name", "company_name", "housing_location",
+        "work_schedule", "schedule_desc", "work_days", "rest_days", "first_work_day",
+        "rotation_status", "departure_time", "gender", "service_type", "transport_type",
+        "cycle_day_today", "base_status_today", "cycle_day_tomorrow", "is_active",
+    )
     for item in payload.employees:
         employee = db.scalar(select(Employee).where(Employee.employee_code == item.employee_code))
         if not employee:
-            employee = Employee(employee_code=item.employee_code, name=item.name, job_title=item.job_title, department_name=item.department_name, company_name=item.company_name, housing_location=item.housing_location, is_active=item.is_active)
+            employee = Employee(employee_code=item.employee_code, name=item.name)
             db.add(employee)
             created += 1
         else:
             employee.name = item.name
-            employee.job_title = item.job_title
-            employee.department_name = item.department_name
-            employee.company_name = item.company_name
-            employee.housing_location = item.housing_location
-            employee.is_active = item.is_active
             updated += 1
+        for field in _SCHEDULE_FIELDS:
+            setattr(employee, field, getattr(item, field))
     db.commit()
     return {"ok": True, "received": len(payload.employees), "created": created, "updated": updated}

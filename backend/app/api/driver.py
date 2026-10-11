@@ -172,7 +172,32 @@ class TripReportIn(BaseModel):
 def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
     """تسليم نسخة الرحلة المكتملة للخادم حتى يراها المشرف، مع إعادة توجيهها لـ Power Automate إن ضُبط."""
     data = payload.trip or {}
+    trip_number = str(data.get("trip_id") or data.get("internal_id") or "")
+    existing = db.scalar(select(Trip).where(Trip.trip_number == trip_number)) if trip_number else None
+    # الرحلة تعتبر مكتملة إما من الحمولة نفسها (مكتملة محلياً على جهاز السائق
+    # وعزل عن الخادم) أو من حالة الرحلة على الخادم.
+    payload_completed = bool(data.get("completed_at")) or data.get("status") in ("completed", "synced")
+    server_completed = existing is not None and existing.status in (TripStatus.completed, TripStatus.transferred, TripStatus.received)
+    if not payload_completed and not server_completed:
+        raise HTTPException(400, "لا يمكن إرسال تقرير الرحلة قبل إكمالها")
+    # إذا بدأت الرحلة على الخادم ثم أُكملت على الجهاز: بلّغ الخادم بالإكمال.
+    if existing is not None and payload_completed and existing.status in (TripStatus.started, TripStatus.boarding):
+        existing.status = TripStatus.completed
+        existing.completed_at = existing.completed_at or datetime.now(timezone.utc)
     employees = data.get("employees") or []
+    # منع التكرار: نفس السائق ونفس الرحلة مع نفس وقت الإكمال يُرسلان مرة واحدة فقط،
+    # ولو تكررت المحاولة (دفع تلقائي + زر مزامنة) نعيد التقرير الموجود دون نسخة إضافية.
+    completed_at = data.get("completed_at")
+    if completed_at:
+        dup = db.scalar(
+            select(TripReport).where(
+                TripReport.driver_username == user.username,
+                TripReport.trip_number == (data.get("trip_id") or data.get("internal_id") or "UNKNOWN"),
+            ).order_by(TripReport.received_at.desc())
+        )
+        if dup and (dup.payload.get("trip") or {}).get("completed_at") == completed_at:
+            db.commit()
+            return {"ok": True, "report_id": dup.id, "duplicate": True, "message": "التقرير موجود مسبقاً"}
     report = TripReport(
         driver_id=user.id,
         driver_username=user.username,

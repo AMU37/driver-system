@@ -65,7 +65,35 @@ def migrate_schema() -> None:
                 conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trip_type VARCHAR(20)")
         except Exception:
             continue
+    _migrate_employee_schedule_columns()
     _normalize_datetime_columns()
+
+
+def _migrate_employee_schedule_columns() -> None:
+    """Idempotent ADD COLUMN migrations for the work-schedule columns on employees."""
+    columns = {
+        "work_schedule": "VARCHAR(100)",
+        "schedule_desc": "VARCHAR(200)",
+        "work_days": "INTEGER",
+        "rest_days": "INTEGER",
+        "first_work_day": "VARCHAR(50)",
+        "rotation_status": "VARCHAR(100)",
+        "departure_time": "VARCHAR(50)",
+        "gender": "VARCHAR(30)",
+        "service_type": "VARCHAR(100)",
+        "transport_type": "VARCHAR(100)",
+        "cycle_day_today": "INTEGER",
+        "base_status_today": "VARCHAR(100)",
+        "cycle_day_tomorrow": "INTEGER",
+    }
+    for column, ddl_type in columns.items():
+        if column_exists("employees", column):
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(f"ALTER TABLE employees ADD COLUMN {column} {ddl_type}")
+        except Exception:
+            continue
 
 
 def _normalize_datetime_columns() -> None:

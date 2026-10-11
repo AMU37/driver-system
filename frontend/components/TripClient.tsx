@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FileSpreadsheet, MessageCircle, Printer, Send, UserPlus, Users2 } from "lucide-react";
+import { FileSpreadsheet, MessageCircle, Pencil, Printer, Send, Trash2, UserPlus, Users2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import StatusBadge from "@/components/StatusBadge";
-import { addNonEmployeePassenger, addPassengerByCode, completeLocalTrip, getActiveLocalTrip, getConfig, getLocalTrip, isOnline, loadSnapshot, syncNow, type LocalPassenger, type LocalTrip } from "@/lib/offlineStore";
+import { addNewPassengerToTrip, addNonEmployeePassenger, addPassengerByCode, completeLocalTrip, getActiveLocalTrip, getConfig, getLocalTrip, isOnline, loadSnapshot, removePassengerFromTrip, syncNow, updatePassengerInTrip, type LocalPassenger, type LocalTrip } from "@/lib/offlineStore";
 import { downloadContent, openWhatsApp, printTripPdf, tripToXlsText } from "@/lib/export";
 import { useAuthGuard, currentUser } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -13,11 +13,14 @@ export default function TripClient({ id }: { id?: string | null }) {
   const [trip, setTrip] = useState<LocalTrip | null>(null);
   const [code, setCode] = useState("");
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", entity: "", purpose: "visitor" });
+  const [form, setForm] = useState({ employee_code: "", name: "", entity: "", purpose: "visitor" });
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [online, setOnline] = useState(true);
+  const [editing, setEditing] = useState<LocalPassenger | null>(null);
+  const [editForm, setEditForm] = useState({ employee_code: "", name: "", entity: "", purpose: "employee" });
+  const [editError, setEditError] = useState("");
 
   useEffect(() => {
     const user = currentUser();
@@ -56,11 +59,20 @@ export default function TripClient({ id }: { id?: string | null }) {
     const user = currentUser();
     if (!trip || !user) return;
     const c = code.trim();
-    if (!c) return;
+    if (!c) {
+      setMsg("");
+      setError("أدخل كود الموظف أولاً");
+      return;
+    }
     setError("");
+    setMsg("");
     const res = addPassengerByCode(trip.id, user.username, c);
     if (res.duplicated) setMsg("هذا الكود مُسجَّل مسبقاً في الرحلة");
-    else if (res.trip) setMsg(res.matched ? "تمت إضافة الموظف بنجاح" : "سُجِّل الكود محلياً — لم يظهر في قاعدة البيانات على هذا الجهاز وسيُعرض للمراجعة");
+    else if (res.notFound) {
+      setError(`الكود «${c}» غير موجود في قاعدة البيانات — تحقق من الرقم، أو أضف الراكب يدوياً من النموذج أدناه`);
+      setForm({ employee_code: c, name: "", entity: "", purpose: "visitor" });
+      setShowNew(true);
+    } else if (res.trip) setMsg("تمت إضافة الموظف بنجاح");
     else setError("تعذر الإضافة — الرحلة غير نشطة");
     setCode("");
     refresh(res.trip);
@@ -69,10 +81,63 @@ export default function TripClient({ id }: { id?: string | null }) {
   function addNonEmp() {
     const user = currentUser();
     if (!trip || !user || !form.name.trim()) return;
-    const t = addNonEmployeePassenger(trip.id, user.username, { name: form.name, entity: form.entity, purpose: form.purpose });
-    setMsg("تم حفظ بيانات الراكب غير الموظف");
-    setForm({ name: "", entity: "", purpose: "visitor" });
+    const t = form.employee_code.trim()
+      ? addNewPassengerToTrip(trip.id, user.username, { employee_code: form.employee_code.trim(), name: form.name.trim(), company: form.entity.trim(), visit_purpose: form.purpose })
+      : addNonEmployeePassenger(trip.id, user.username, { name: form.name, entity: form.entity, purpose: form.purpose });
+    setMsg("تم حفظ بيانات الراكب");
+    setForm({ employee_code: "", name: "", entity: "", purpose: "visitor" });
     setShowNew(false);
+    refresh(t);
+  }
+
+  function startEdit(p: LocalPassenger) {
+    setEditError("");
+    setEditing(p);
+    setEditForm({
+      employee_code: p.employee_code || "",
+      name: p.name || "",
+      entity: p.company || "",
+      purpose: p.visit_purpose || (p.source === "non_employee" ? "visitor" : "employee"),
+    });
+  }
+
+  function saveEdit() {
+    const user = currentUser();
+    if (!trip || !user || !editing) return;
+    setEditError("");
+    if (editing.source === "non_employee") {
+      if (!editForm.name.trim()) { setEditError("أدخل اسم الراكب"); return; }
+      const res = updatePassengerInTrip(trip.id, user.username, editing.client_uuid, {
+        name: editForm.name,
+        company: editForm.entity,
+        visit_purpose: editForm.purpose,
+      });
+      if (!res.trip) { setEditError("تعذر حفظ التعديل — الرحلة غير نشطة أو مكتملة"); return; }
+      setMsg("تم تحديث بيانات الراكب");
+      setEditing(null);
+      refresh(res.trip);
+      return;
+    }
+    if (!editForm.employee_code.trim()) { setEditError("أدخل كود الموظف"); return; }
+    const res = updatePassengerInTrip(trip.id, user.username, editing.client_uuid, {
+      employee_code: editForm.employee_code,
+      name: editForm.name,
+      visit_purpose: editForm.purpose,
+    });
+    if (res.duplicated) { setEditError("هذا الكود مُسجَّل مسبقاً في الرحلة"); return; }
+    if (!res.trip) { setEditError("تعذر حفظ التعديل — الرحلة غير نشطة أو مكتملة"); return; }
+    setMsg("تم تحديث بيانات الموظف");
+    setEditing(null);
+    refresh(res.trip);
+  }
+
+  function removePassenger(p: LocalPassenger) {
+    const user = currentUser();
+    if (!trip || !user) return;
+    const t = removePassengerFromTrip(trip.id, user.username, p.client_uuid);
+    if (!t) { setError("لا يمكن حذف الصاعدين بعد إكمال الرحلة"); return; }
+    setError("");
+    setMsg("تم حذف الراكب من الرحلة");
     refresh(t);
   }
 
@@ -111,6 +176,7 @@ export default function TripClient({ id }: { id?: string | null }) {
 
   function passengerTitle(p: LocalPassenger): string {
     if (p.source === "non_employee") return p.name || "راكب غير موظف";
+    if (p.source === "new_employee") return p.name || `كود ${p.employee_code || "—"}`;
     if (p.employee_code && !p.name) return `كود ${p.employee_code}`;
     return p.name || p.employee_code || "غير مسجل";
   }
@@ -125,13 +191,14 @@ export default function TripClient({ id }: { id?: string | null }) {
     const bits = [];
     if (p.employee_code) bits.push(`كود ${p.employee_code}`);
     if (p.department) bits.push(p.department);
+    if (p.source === "new_employee") bits.push("أُضيف يدوياً — للمراجعة من المشرف");
     if (!p.name && !p.department) bits.push("لم يُعثر عليه في قاعدة البيانات");
     return bits.join(" · ");
   }
 
   function passengerBadge(p: LocalPassenger): { label: string; cls: string } {
     if (p.source === "non_employee") return { label: "غير موظف", cls: "status-needs_review" };
-    if (p.source === "code_only") return { label: "تحتاج تأكيد", cls: "status-needs_review" };
+    if (p.source === "code_only" || p.source === "new_employee") return { label: "تحتاج تأكيد", cls: "status-needs_review" };
     return { label: "مؤكد", cls: "status-completed" };
   }
 
@@ -197,17 +264,19 @@ export default function TripClient({ id }: { id?: string | null }) {
               <div className="new-card-head">
                 <div>
                   <UserPlus size={22} />
-                  <div><strong>راكب غير موظف</strong><span>تظهر بياناته للمشرف وتُحفظ على الجهاز.</span></div>
+                  <div><strong>{form.employee_code ? `إضافة موظف يدوياً — كود ${form.employee_code}` : "راكب غير موظف"}</strong><span>{form.employee_code ? "الرقم غير موجود في قاعدة البيانات، تُحفظ بياناته للمراجعة عند المشرف." : "تظهر بياناته للمشرف وتُحفظ على الجهاز."}</span></div>
                 </div>
-                <button className="link-btn" onClick={() => setShowNew(false)}>إلغاء</button>
+                <button className="link-btn" onClick={() => { setShowNew(false); setForm({ employee_code: "", name: "", entity: "", purpose: "visitor" }); }}>إلغاء</button>
               </div>
               <div className="form-grid">
+                {!form.employee_code && <label className="field"><span>كود الموظف (اختياري)</span><input value={form.employee_code} onChange={e => setForm({ ...form, employee_code: e.target.value })} inputMode="numeric" placeholder="مثال: 80045" /></label>}
                 <label className="field"><span>الاسم</span><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} autoFocus /></label>
                 <label className="field"><span>الجهة التي استدعته</span><input value={form.entity} onChange={e => setForm({ ...form, entity: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
                 <label className="field"><span>الغرض</span>
                   <select value={form.purpose} onChange={e => setForm({ ...form, purpose: e.target.value })}>
                     <option value="visitor">زائر</option>
                     <option value="contractor">مقاول</option>
+                    <option value="employee">موظف</option>
                     <option value="meeting">اجتماع</option>
                     <option value="training">تدريب</option>
                     <option value="maintenance">صيانة</option>
@@ -247,6 +316,12 @@ export default function TripClient({ id }: { id?: string | null }) {
                     <span>{passengerSubtitle(p)}</span>
                   </div>
                   <span className={`status ${badge.cls}`}>{badge.label}</span>
+                  {active && (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="icon-btn" style={{ width: 32, height: 32, fontSize: 16 }} title="تعديل" aria-label="تعديل" onClick={() => startEdit(p)}><Pencil size={16} /></button>
+                      <button className="icon-btn" style={{ width: 32, height: 32, fontSize: 16 }} title="حذف" aria-label="حذف" onClick={() => removePassenger(p)}><Trash2 size={16} /></button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -255,7 +330,8 @@ export default function TripClient({ id }: { id?: string | null }) {
       )}
       {synced && <div className="alert success">تم إرسال هذه الرحلة إلى النظام بنجاح.</div>}
       {trip.status === "completed" && !synced && !hasDeliveryRoute && <div className="hint">لم يُضبط رابط إرسال ولا توجد جلسة خادم — عيّن رابط الإرسال في الإعدادات أو سجّل الدخول عبر الشبكة ثم أعد الإرسال من هذا الجهاز.</div>}
-      {trip.passengers.length > 0 && (
+      {active && <div className="hint">يمكنك تعديل أو حذف أي راكب أُضيف بالخطأ الآن. لا يمكن إرسال تقرير الرحلة إلى النظام إلا بعد إكمالها.</div>}
+      {trip.status !== "boarding" && trip.passengers.length > 0 && (
         <section className="section">
           <div className="section-title">
             <div>
@@ -274,6 +350,48 @@ export default function TripClient({ id }: { id?: string | null }) {
         <button className="secondary-btn" disabled={!active || busy} onClick={complete}>إكمال الرحلة</button>
         <button className="primary-btn" disabled={!readyToSend || busy} onClick={sendNow}><Send size={16} style={{ verticalAlign: "-3px" }} /> إرسال إلى النظام</button>
       </section>
+      {editing && (
+        <div className="modal-backdrop" onClick={() => setEditing(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <div className="eyebrow">EDIT PASSENGER</div>
+                <h2>تعديل بيانات الراكب</h2>
+              </div>
+              <button className="icon-btn" onClick={() => setEditing(null)}>×</button>
+            </div>
+            <div className="stack-lg">
+              {editing.source === "non_employee" ? (
+                <>
+                  <label className="field"><span>الاسم</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} autoFocus /></label>
+                  <label className="field"><span>الجهة التي استدعته</span><input value={editForm.entity} onChange={e => setEditForm({ ...editForm, entity: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                  <label className="field"><span>الغرض</span>
+                    <select value={editForm.purpose} onChange={e => setEditForm({ ...editForm, purpose: e.target.value })}>
+                      <option value="visitor">زائر</option>
+                      <option value="contractor">مقاول</option>
+                      <option value="meeting">اجتماع</option>
+                      <option value="training">تدريب</option>
+                      <option value="maintenance">صيانة</option>
+                      <option value="delivery">تسليم/شحن</option>
+                      <option value="other">أخرى</option>
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label className="field"><span>كود الموظف</span><input value={editForm.employee_code} onChange={e => setEditForm({ ...editForm, employee_code: e.target.value })} inputMode="numeric" autoFocus /></label>
+                  <label className="field"><span>الاسم (يُملأ تلقائياً من كود الموظف)</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></label>
+                </>
+              )}
+              {editError && <div className="alert danger">{editError}</div>}
+              <div className="modal-actions">
+                <button className="secondary-btn" onClick={() => setEditing(null)}>إلغاء</button>
+                <button className="primary-btn" onClick={saveEdit}>حفظ التعديل</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

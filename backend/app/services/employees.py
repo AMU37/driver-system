@@ -16,28 +16,85 @@ _ALIASES = {
     "fullname": "name",
     "الاسم": "name",
     "اسمالموظف": "name",
+    "الاسمالرسمي": "name",
     "jobtitle": "job_title",
     "job": "job_title",
     "الوظيفة": "job_title",
     "المسمي": "job_title",
     "المسمى": "job_title",
+    "المسمىالوظيفي": "job_title",
     "departmentname": "department_name",
     "department": "department_name",
     "الادارة": "department_name",
     "الإدارة": "department_name",
     "القسم": "department_name",
+    "اسمادارةالفرعية": "department_name",
+    "اسمالإدارةالفرعي": "department_name",
+    "إسمالادارةالفرعية": "department_name",
+    "إسمالإدارةالفرعية": "department_name",
     "companyname": "company_name",
     "company": "company_name",
     "الشركة": "company_name",
     "housinglocation": "housing_location",
     "housing": "housing_location",
     "السكن": "housing_location",
+    "موقعالسكن": "housing_location",
+    # خطة الدوام والدورة الفعلية من كشف «الموظفين مع نظام الدوام»
+    "جدولالعمل": "work_schedule",
+    "شرحنوعالدوام": "schedule_desc",
+    "شرحأنواعالدوام": "schedule_desc",
+    "عددأيامالعمل": "work_days",
+    "عددأيامالراحة": "rest_days",
+    "تاريخاوليومعمل": "first_work_day",
+    "تاريخاوليومعمل": "first_work_day",
+    "اوليومعمل": "first_work_day",
+    "أوليومعمل": "first_work_day",
+    "الحالةالدوريةللموظف": "rotation_status",
+    "الحالةالدورية": "rotation_status",
+    "وقتالمغادرة": "departure_time",
+    "نوعالجنس": "gender",
+    "الجنس": "gender",
+    "نوعالخدمة": "service_type",
+    "تصنيفالنقل": "transport_type",
+    "نقلدوري": "transport_type",
+    "دوري": "transport_type",
+    "يومالدورةاليوم": "cycle_day_today",
+    "دورةاليوم": "cycle_day_today",
+    "الحالةالأساسيةاليوم": "base_status_today",
+    "الحالةالاساسيةاليوم": "base_status_today",
+    "يومالدورةغدا": "cycle_day_tomorrow",
+    "يومالدورةغداً": "cycle_day_tomorrow",
+    "دورةغدا": "cycle_day_tomorrow",
+    "دورةغداً": "cycle_day_tomorrow",
 }
 
-_FIELDS = ["employee_code", "name", "job_title", "department_name", "company_name", "housing_location"]
+_FIELDS = [
+    "employee_code", "name", "job_title", "department_name", "company_name", "housing_location",
+    "work_schedule", "schedule_desc", "work_days", "rest_days", "first_work_day",
+    "rotation_status", "departure_time", "gender", "service_type", "transport_type",
+    "cycle_day_today", "base_status_today", "cycle_day_tomorrow",
+]
 
 MAX_IMPORT_ROWS = 50000
 MAX_FIELD_LEN = 200
+
+_NUMBER_FIELDS = {"work_days", "rest_days", "cycle_day_today", "cycle_day_tomorrow"}
+
+
+def _to_int(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    text = str(value).strip()
+    if not text:
+        return None
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return int(digits) if digits else None
 
 
 def _sanitize(text: str) -> str:
@@ -137,6 +194,18 @@ def import_employee_rows(db: Session, rows: list[dict]) -> dict:
         employee.department_name = _clean(row.get("department_name")) or employee.department_name
         employee.company_name = _clean(row.get("company_name")) or employee.company_name
         employee.housing_location = _clean(row.get("housing_location")) or employee.housing_location
+        employee.work_schedule = _clean(row.get("work_schedule")) or employee.work_schedule
+        employee.schedule_desc = _clean(row.get("schedule_desc")) or employee.schedule_desc
+        employee.first_work_day = _clean(row.get("first_work_day")) or employee.first_work_day
+        employee.rotation_status = _clean(row.get("rotation_status")) or employee.rotation_status
+        employee.departure_time = _clean(row.get("departure_time")) or employee.departure_time
+        employee.gender = _clean(row.get("gender")) or employee.gender
+        employee.service_type = _clean(row.get("service_type")) or employee.service_type
+        employee.transport_type = _clean(row.get("transport_type")) or employee.transport_type
+        employee.base_status_today = _clean(row.get("base_status_today")) or employee.base_status_today
+        for field in _NUMBER_FIELDS:
+            value = _to_int(row.get(field))
+            setattr(employee, field, value if value is not None else getattr(employee, field))
         employee.is_active = True
     db.commit()
     return {"created": created, "updated": updated, "skipped": errors}

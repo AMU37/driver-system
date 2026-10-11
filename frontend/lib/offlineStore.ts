@@ -30,6 +30,19 @@ export type SnapshotEmployee = {
   department_name?: string | null;
   company_name?: string | null;
   housing_location?: string | null;
+  work_schedule?: string | null;
+  schedule_desc?: string | null;
+  work_days?: number | null;
+  rest_days?: number | null;
+  first_work_day?: string | null;
+  rotation_status?: string | null;
+  departure_time?: string | null;
+  gender?: string | null;
+  service_type?: string | null;
+  transport_type?: string | null;
+  cycle_day_today?: number | null;
+  base_status_today?: string | null;
+  cycle_day_tomorrow?: number | null;
   is_active: boolean;
 };
 export type SnapshotBus = { id: number; number: string; plate_number?: string | null; capacity: number; company_code: string; is_active: boolean };
@@ -122,6 +135,8 @@ export function uuid(): string {
   return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
 
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
 export function isOnline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine;
 }
@@ -200,6 +215,58 @@ function parseNativeResponse(res: { status?: number; data?: any }): { status: nu
   return { status, ok: status >= 200 && status < 300, data: parsed };
 }
 
+/**
+ * يجدّد رمز الوصول باستخدام رمز التحديث المحفوظ. يعيد true عند النجاح.
+ * يضمن استمرار إرسال الرحلات للمشرف بعد انتهاء صلاحية access_token (60 دقيقة)
+ * دون إجبار السائق على تسجيل الدخول من جديد.
+ */
+async function refreshAccessToken(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const base = backendBaseUrl();
+  const refresh = window.localStorage.getItem("refresh_token");
+  if (!base || !refresh) return false;
+  try {
+    const res = await nativeRequest(`${base}/api/auth/refresh`, {
+      method: "POST",
+      body: { refresh_token: refresh },
+      timeoutMs: 30000,
+    });
+    if (res.ok && res.data && res.data.access_token) {
+      window.localStorage.setItem("access_token", res.data.access_token);
+      if (res.data.refresh_token) window.localStorage.setItem("refresh_token", res.data.refresh_token);
+      if (res.data.user) window.localStorage.setItem("user", JSON.stringify(res.data.user));
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
+ * طلب مصادق عليه يضيف ترويسة التوكن، ويعيد المحاولة مرة واحدة بعد تجديد
+ * الجلسة عند استجابة 401/403 (انتهاء الصلاحية أو طلب تغيير كلمة المرور).
+ */
+async function authorizedRequest(
+  path: string,
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {}
+): Promise<{ status: number; ok: boolean; data: any }> {
+  const base = backendBaseUrl();
+  if (!base) return { status: 0, ok: false, data: null };
+  const send = (token: string | null) =>
+    nativeRequest(`${base}${path}`, {
+      ...init,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  let token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
+  let res = await send(token);
+  if ((res.status === 401 || res.status === 403) && (await refreshAccessToken())) {
+    token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
+    res = await send(token);
+  }
+  return res;
+}
+
 /* ---------- snapshot ---------- */
 let snapshotMem: Snapshot | null = null;
 
@@ -235,7 +302,7 @@ export async function syncSnapshotFromServer(): Promise<{ ok: boolean; built_at?
   const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
   if (!token) return { ok: false, error: "لا توجد جلسة متصلة بالخادم — سجّل الدخول عبر الشبكة أولاً." };
   try {
-    const res = await nativeRequest(`${base}/api/sync/snapshot`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await authorizedRequest(`/api/sync/snapshot`);
     if (res.ok && res.data && Array.isArray(res.data.employees)) {
       const data = res.data as Snapshot;
       storeSnapshot(data);
@@ -292,27 +359,38 @@ export function hasLocalPin(username: string): boolean {
 export async function tryOnlineLogin(username: string, password: string): Promise<{ ok: true; user: OfflineUser } | { ok: false; code: "unauthorized" | "unreachable" }> {
   const base = backendBaseUrl();
   if (!base) return { ok: false, code: "unreachable" };
-  try {
-    const res = await nativeRequest(`${base}/api/auth/login`, { method: "POST", body: { username, password } });
-    if (res.ok) {
-      const user = res.data?.user as OfflineUser;
-      if (user) {
-        storeLocalSession(user);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem("access_token", res.data.access_token);
-          window.localStorage.setItem("refresh_token", res.data.refresh_token);
-          window.localStorage.setItem("user", JSON.stringify(user));
+  // إعادة المحاولة تلقائياً (على الأقل مرتين) قبل التحول إلى الدخول المحلي:
+  // الخادم على Render يعيد الإقلاع البارد عند الخمول وقد يستغرق 30-60 ثانية.
+  const attempts = 2;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const res = await nativeRequest(`${base}/api/auth/login`, {
+        method: "POST",
+        body: { username, password },
+        timeoutMs: 60000,
+      });
+      if (res.ok) {
+        const user = res.data?.user as OfflineUser;
+        if (user) {
+          storeLocalSession(user);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("access_token", res.data.access_token);
+            window.localStorage.setItem("refresh_token", res.data.refresh_token);
+            window.localStorage.setItem("user", JSON.stringify(user));
+          }
         }
+        return { ok: true, user };
       }
-      return { ok: true, user };
+      // 429 يعني محاولات كثيرة مؤقتاً، وليس بيانات خاطئة: نعامله كتعذر اتصال
+      // حتى لا نمنع السائق من استخدام رمز PIN المحلي على هذا الجهاز.
+      const code = res.status === 401 ? "unauthorized" : "unreachable";
+      if (code === "unauthorized") return { ok: false, code };
+      if (attempt < attempts - 1) await sleep(2000);
+    } catch {
+      if (attempt < attempts - 1) await sleep(2000);
     }
-    // 429 يعني محاولات كثيرة مؤقتاً، وليس بيانات خاطئة: نعامله كتعذر اتصال
-    // حتى لا نمنع السائق من استخدام رمز PIN المحلي على هذا الجهاز.
-    const code = res.status === 401 ? "unauthorized" : "unreachable";
-    return { ok: false, code };
-  } catch {
-    return { ok: false, code: "unreachable" };
   }
+  return { ok: false, code: "unreachable" };
 }
 
 export function findDriver(username: string): SnapshotDriver | null {
@@ -347,7 +425,7 @@ export async function refreshLiveData(user: OfflineUser): Promise<{ refreshed: b
   let planned = false;
   let employees = false;
   try {
-    const p = await nativeRequest(`${base}/api/driver/planned`, { headers: { Authorization: `Bearer ${token}` } });
+    const p = await authorizedRequest(`/api/driver/planned`);
     if (p.ok && Array.isArray(p.data)) {
       const mapped: SnapshotPlanned[] = p.data.map((x: any) => ({
         id: x.id, external_id: x.external_id, trip_number: x.trip_number, driver_id: x.driver_id,
@@ -362,7 +440,7 @@ export async function refreshLiveData(user: OfflineUser): Promise<{ refreshed: b
     /* ignore */
   }
   try {
-    const e = await nativeRequest(`${base}/api/driver/employees`, { headers: { Authorization: `Bearer ${token}` } });
+    const e = await authorizedRequest(`/api/driver/employees`);
     if (e.ok && Array.isArray(e.data)) {
       const mapped: SnapshotEmployee[] = e.data.map((x: any) => ({
         id: x.id, employee_code: x.employee_code, name: x.name, job_title: x.job_title,
@@ -672,12 +750,12 @@ export function addNewPassengerToTrip(tripId: string, driverUsername: string, fo
   return trip;
 }
 
-export function addPassengerByCode(tripId: string, driverUsername: string, code: string): { trip: LocalTrip | null; matched: boolean; duplicated: boolean } {
+export function addPassengerByCode(tripId: string, driverUsername: string, code: string): { trip: LocalTrip | null; matched: boolean; duplicated: boolean; notFound: boolean } {
   const c = code.trim();
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
-  if (!trip || trip.status !== "boarding" || !c) return { trip: null, matched: false, duplicated: false };
-  if (trip.passengers.some((p) => p.employee_code === c)) return { trip, matched: false, duplicated: true };
+  if (!trip || trip.status !== "boarding" || !c) return { trip: null, matched: false, duplicated: false, notFound: false };
+  if (trip.passengers.some((p) => p.employee_code === c)) return { trip, matched: false, duplicated: true, notFound: false };
   const emp = searchEmployee(c);
   if (emp) {
     trip.passengers.push({
@@ -693,23 +771,10 @@ export function addPassengerByCode(tripId: string, driverUsername: string, code:
       source: "employee_master",
       needs_review: false,
     });
-  } else {
-    trip.passengers.push({
-      client_uuid: uuid(),
-      employee_code: c,
-      name: "",
-      job_title: null,
-      department: null,
-      company: null,
-      housing_location: null,
-      visit_purpose: "unknown",
-      boarded_at: new Date().toISOString(),
-      source: "code_only",
-      needs_review: true,
-    });
+    persistTrips(list);
+    return { trip, matched: true, duplicated: false, notFound: false };
   }
-  persistTrips(list);
-  return { trip, matched: !!emp, duplicated: false };
+  return { trip, matched: false, duplicated: false, notFound: true };
 }
 
 export function addNonEmployeePassenger(tripId: string, driverUsername: string, data: { name: string; entity: string; purpose: string }): LocalTrip | null {
@@ -731,6 +796,70 @@ export function addNonEmployeePassenger(tripId: string, driverUsername: string, 
   });
   persistTrips(list);
   return trip;
+}
+
+export function removePassengerFromTrip(tripId: string, driverUsername: string, clientUuid: string): LocalTrip | null {
+  const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
+  const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
+  if (!trip || trip.status !== "boarding") return null;
+  const before = trip.passengers.length;
+  trip.passengers = trip.passengers.filter((p) => p.client_uuid !== clientUuid);
+  if (trip.passengers.length === before) return trip;
+  persistTrips(list);
+  return trip;
+}
+
+export function updatePassengerInTrip(
+  tripId: string,
+  driverUsername: string,
+  clientUuid: string,
+  patch: { employee_code?: string; name?: string; company?: string; visit_purpose?: string }
+): { trip: LocalTrip | null; duplicated: boolean } {
+  const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
+  const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
+  if (!trip || trip.status !== "boarding") return { trip: null, duplicated: false };
+  const passenger = trip.passengers.find((p) => p.client_uuid === clientUuid);
+  if (!passenger) return { trip, duplicated: false };
+
+  if (passenger.source === "non_employee") {
+    if (patch.name !== undefined) passenger.name = patch.name.trim();
+    if (patch.company !== undefined) passenger.company = patch.company.trim() || null;
+    if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose || "other";
+    persistTrips(list);
+    return { trip, duplicated: false };
+  }
+
+  if (patch.employee_code !== undefined) {
+    const code = patch.employee_code.trim();
+    if (code) {
+      const duplicated = trip.passengers.some((p) => p.client_uuid !== clientUuid && p.employee_code === code);
+      if (duplicated) return { trip, duplicated: true };
+      passenger.employee_code = code;
+      const emp = searchEmployee(code);
+      if (emp) {
+        passenger.name = emp.name;
+        passenger.job_title = emp.job_title;
+        passenger.department = emp.department_name;
+        passenger.company = emp.company_name;
+        passenger.housing_location = emp.housing_location;
+        passenger.source = "employee_master";
+        passenger.needs_review = false;
+      } else {
+        passenger.name = (patch.name ?? passenger.name ?? "").trim();
+        passenger.job_title = null;
+        passenger.department = null;
+        passenger.company = null;
+        passenger.housing_location = null;
+        passenger.source = "code_only";
+        passenger.needs_review = true;
+      }
+    }
+  } else if (patch.name !== undefined) {
+    passenger.name = patch.name.trim();
+  }
+  if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose;
+  persistTrips(list);
+  return { trip, duplicated: false };
 }
 
 export function completeLocalTrip(tripId: string, driverUsername: string): LocalTrip | null {
@@ -764,6 +893,7 @@ export function buildTripPayload(trip: LocalTrip): Record<string, unknown> {
     trip: {
       trip_id: trip.trip_number,
       internal_id: trip.planned_trip_id ?? null,
+      status: trip.status,
       company_code: trip.company_code,
       driver_id: trip.driver_username,
       bus_number: trip.bus_number || trip.planned_bus_number,
@@ -797,11 +927,10 @@ export async function reportTripToBackend(trip: LocalTrip): Promise<{ ok: boolea
   const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
   if (!base || !token) return { ok: false, error: "لا يوجد خادم أو جلسة متصلة" };
   try {
-    const res = await nativeRequest(`${base}/api/driver/trips/report`, {
+    const res = await authorizedRequest(`/api/driver/trips/report`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
       body: buildTripPayload(trip),
-      timeoutMs: 10000,
+      timeoutMs: 90000,
     });
     return res.ok ? { ok: true } : { ok: false, error: `الخادم رفض التقرير (${res.status})` };
   } catch {
@@ -869,6 +998,49 @@ export async function syncNow(driverUsername: string): Promise<{ pending: number
   configRec.last_sync_at = new Date().toISOString();
   saveConfig(configRec);
   return { pending, pushed, failed, lastError };
+}
+
+/**
+ * يدفع الرحلات المكتملة المعلّقة تلقائياً عند فتح التطبيق أو عودة الشبكة،
+ * بشرط وجود مسار إرسال (جلسة خادم أو رابط Power Automate). قفل داخلي يمنع
+ * تشغيل مزامنتين متزامنتين.
+ */
+let autoSyncInFlight = false;
+// بيانات دخول مؤقتة في الذاكرة فقط (لا تُحفظ على الجهاز) يُعاد استخدامها
+// لإعادة الاتصال بالخادم تلقائياً بعد دخول PIN، حتى لو إقلاع الخادم البارد
+// منع أول محاولة من النجاح.
+let pendingCredentials: { username: string; password: string } | null = null;
+export function keepCredentials(username: string, password: string) {
+  pendingCredentials = { username, password };
+}
+export function clearCredentials() {
+  pendingCredentials = null;
+}
+
+async function ensureServerSession(username: string): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (window.localStorage.getItem("access_token")) return true;
+  if (!backendBaseUrl() || !isOnline() || !pendingCredentials || pendingCredentials.username !== username) return false;
+  const r = await tryOnlineLogin(pendingCredentials.username, pendingCredentials.password);
+  return r.ok;
+}
+
+export async function autoPushPending(driverUsername: string): Promise<number> {
+  if (autoSyncInFlight || typeof window === "undefined" || !isOnline()) return 0;
+  const config = getConfig();
+  const hasRoute = !!config.power_automate_url.trim() || (!!backendBaseUrl() && !!window.localStorage.getItem("access_token"));
+  const shouldReconnect = !hasRoute && !!config.power_automate_url.trim();
+  const ok = hasRoute || (await ensureServerSession(driverUsername));
+  if (!ok || !pendingSyncCount(driverUsername)) return 0;
+  autoSyncInFlight = true;
+  try {
+    const r = await syncNow(driverUsername);
+    return r.pushed;
+  } catch {
+    return 0;
+  } finally {
+    autoSyncInFlight = false;
+  }
 }
 
 export function pendingSyncCount(driverUsername: string): number {
