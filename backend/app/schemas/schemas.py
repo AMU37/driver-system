@@ -121,6 +121,16 @@ class TripDetail(TripOut):
     passengers: list[TripEmployeeOut] = []
 
 
+class PlannedTripEmployeeOut(BaseModel):
+    employee_code: str
+    name: str | None = None
+    housing_location: str | None = None
+    work_schedule: str | None = None
+    schedule_desc: str | None = None
+    departure_time: str | None = None
+    cycle_status: str | None = None
+
+
 class PlannedTripOut(BaseModel):
     id: int
     external_id: str | None = None
@@ -136,6 +146,7 @@ class PlannedTripOut(BaseModel):
     route_name: str | None = None
     origin: str | None = None
     destination: str | None = None
+    assigned_employees: list[PlannedTripEmployeeOut] = []
 
 
 class PlannedTripImport(BaseModel):
@@ -163,6 +174,8 @@ class AdminTripPlanCreate(BaseModel):
     trip_type: str | None = None
     scheduled_start_at: datetime
     release_hours: int | None = None
+    employee_codes: list[str] = []
+    employee_statuses: dict[str, str] = {}
 
 
 class DriverCreate(BaseModel):

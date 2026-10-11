@@ -3,13 +3,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_roles
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_password
-from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
+from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, PlannedTripEmployee, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
 from app.schemas import AdminTripPlanCreate, AdminUserCreate, AdminUserUpdate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
 from app.services.employees import import_employee_rows, parse_employee_rows
 from app.services.numbering import next_trip_number, normalize_trip_type
@@ -18,8 +18,23 @@ from app.services.trips import ensure_bus, ensure_route
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+def _assigned_out(item: PlannedTrip) -> list[dict]:
+    return [
+        {
+            "employee_code": pe.employee_code,
+            "name": pe.name_snapshot,
+            "housing_location": pe.housing_location_snapshot,
+            "work_schedule": pe.work_schedule_snapshot,
+            "schedule_desc": pe.schedule_desc_snapshot,
+            "departure_time": pe.departure_time_snapshot,
+            "cycle_status": pe.cycle_status,
+        }
+        for pe in item.assigned_employees
+    ]
+
+
 def planned_out(item: PlannedTrip) -> dict:
-    return {"id": item.id, "external_id": item.external_id, "trip_number": item.trip_number, "driver_id": item.driver_id, "company_code": item.company_code, "trip_date": item.trip_date, "trip_type": item.trip_type, "release_at": item.release_at, "scheduled_start_at": item.scheduled_start_at, "status": item.status.value, "bus_number": item.bus.number if item.bus else None, "route_name": item.route.name if item.route else None, "origin": item.route.origin if item.route else None, "destination": item.route.destination if item.route else None}
+    return {"id": item.id, "external_id": item.external_id, "trip_number": item.trip_number, "driver_id": item.driver_id, "company_code": item.company_code, "trip_date": item.trip_date, "trip_type": item.trip_type, "release_at": item.release_at, "scheduled_start_at": item.scheduled_start_at, "status": item.status.value, "bus_number": item.bus.number if item.bus else None, "route_name": item.route.name if item.route else None, "origin": item.route.origin if item.route else None, "destination": item.route.destination if item.route else None, "assigned_employees": _assigned_out(item)}
 
 
 @router.get("/drivers", response_model=list[UserOut])
@@ -140,9 +155,41 @@ def import_employees(file: UploadFile = File(...), user: User = Depends(require_
     return {"ok": True, "received": len(rows), **result}
 
 
+def _assign_employees(db: Session, item: PlannedTrip, codes: list[str], statuses: dict[str, str]) -> None:
+    clean = []
+    seen = set()
+    for raw in codes or []:
+        code = str(raw).strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        clean.append(code)
+    if not clean:
+        return
+    employees = db.scalars(select(Employee).where(Employee.employee_code.in_(clean))).all()
+    by_code = {e.employee_code: e for e in employees}
+    for code in clean:
+        emp = by_code.get(code)
+        db.add(
+            PlannedTripEmployee(
+                planned_trip_id=item.id,
+                employee_id=emp.id if emp else None,
+                employee_code=code,
+                name_snapshot=emp.name if emp else None,
+                housing_location_snapshot=emp.housing_location if emp else None,
+                work_schedule_snapshot=emp.work_schedule if emp else None,
+                schedule_desc_snapshot=emp.schedule_desc if emp else None,
+                departure_time_snapshot=emp.departure_time if emp else None,
+                cycle_status=(statuses or {}).get(code),
+            )
+        )
+
+
 @router.get("/planned-trips", response_model=list[PlannedTripOut])
 def planned_trips(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
-    items = db.scalars(select(PlannedTrip).order_by(PlannedTrip.scheduled_start_at.desc()).limit(200)).all()
+    items = db.scalars(
+        select(PlannedTrip).options(selectinload(PlannedTrip.assigned_employees)).order_by(PlannedTrip.scheduled_start_at.desc()).limit(200)
+    ).all()
     return [planned_out(i) for i in items]
 
 
@@ -185,7 +232,11 @@ def create_plan(payload: AdminTripPlanCreate, user: User = Depends(require_roles
             item = None
     if item is None:
         raise HTTPException(409, "تعذر توليد رقم رحلة فريد — أعد المحاولة")
-    db.refresh(item)
+    _assign_employees(db, item, payload.employee_codes, payload.employee_statuses)
+    db.commit()
+    item = db.scalar(
+        select(PlannedTrip).options(selectinload(PlannedTrip.assigned_employees)).where(PlannedTrip.id == item.id)
+    )
     item.bus = bus
     item.route = route
     return planned_out(item)

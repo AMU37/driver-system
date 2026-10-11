@@ -12,14 +12,23 @@ import {
   updateAdminUser, updateDriver, updateEmployeeMaster, updateHousing, updateJob, updateRoute,
   type PlannedTrip, type User,
 } from "@/lib/api";
-import { ArchiveRestore, BusFront, ChevronDown, ChevronUp, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, BusFront, ChevronDown, ChevronUp, ClipboardList, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck, Users } from "lucide-react";
 import { useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, openReportTripWhatsApp, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText } from "@/lib/export";
-import { employeeCycle, toDayIndex, type CycleInfo } from "@/lib/cycle";
+import { employeeCycle, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
 
-type Tab = "plans" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
+type Tab = "plans" | "planner" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
+
+const CYCLE_STATUS_OPTIONS: { value: CycleStatus | ""; label: string }[] = [
+  { value: "", label: "كل الحالات" },
+  { value: "arriving", label: "قادم" },
+  { value: "working", label: "مداوم" },
+  { value: "departing", label: "مغادر" },
+  { value: "transport_arrange", label: "ترتيب مواصلات" },
+  { value: "vacation", label: "إجازة" },
+];
 
 const BOOL_OPTIONS = [{ value: true, label: "نشط" }, { value: false, label: "معطّل" }];
 const YESNO = (v: any) => (v ? "نشط" : "معطّل");
@@ -97,6 +106,13 @@ export default function AdminPage() {
   const [cycleDate, setCycleDate] = useState<string>(todayIso());
   const [cycleSearch, setCycleSearch] = useState("");
   const [cycleOnlyMissing, setCycleOnlyMissing] = useState(false);
+  const [planDate, setPlanDate] = useState<string>(todayIso());
+  const [planHousing, setPlanHousing] = useState("");
+  const [planSchedule, setPlanSchedule] = useState("");
+  const [planStatus, setPlanStatus] = useState<CycleStatus | "">("arriving");
+  const [planSearch, setPlanSearch] = useState("");
+  const [planSelected, setPlanSelected] = useState<Record<string, boolean>>({});
+  const [pForm, setPForm] = useState<any>({ driver_code: "", bus_number: "", route_name: "", origin: "", destination: "", trip_type: "قادم", scheduled_start_at: "" });
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [empSearch, setEmpSearch] = useState("");
@@ -200,6 +216,8 @@ export default function AdminPage() {
           company_code: p.company_code,
           scheduled_start_at: p.scheduled_start_at,
           trip_type: p.trip_type,
+          employee_codes: p.employee_codes ?? [],
+          employee_statuses: p.employee_statuses ?? {},
         });
         removeLocalAdminPlan(p.client_id);
         pushed += 1;
@@ -439,7 +457,75 @@ export default function AdminPage() {
     setLoading(false);
   }
 
+  async function createPlanWithEmployees() {
+    const codes = Object.keys(planSelected).filter((c) => planSelected[c]);
+    if (!pForm.driver_code) { setMsg("اختر السائق أولاً"); return; }
+    if (!pForm.bus_number) { setMsg("اختر الباص أولاً"); return; }
+    if (!pForm.route_name) { setMsg("اختر خط السير أولاً"); return; }
+    if (!pForm.scheduled_start_at) { setMsg("حدد موعد الانطلاق"); return; }
+    if (!codes.length) { setMsg("حدد موظفاً واحداً على الأقل"); return; }
+    setLoading(true);
+    setMsg("");
+    const driver = drivers.find(d => d.driver_code === pForm.driver_code);
+    const dateValue = planDate || todayIso();
+    const statuses: Record<string, string> = {};
+    for (const c of codes) {
+      const emp = allEmployees.find((e) => String(e.employee_code) === c);
+      const st = employeeCycle(emp, dateValue)?.status;
+      if (st) statuses[c] = st;
+    }
+    const payload = {
+      driver_code: pForm.driver_code,
+      bus_number: pForm.bus_number,
+      route_name: pForm.route_name,
+      origin: pForm.origin,
+      destination: pForm.destination,
+      company_code: driver?.company_code || undefined,
+      trip_type: pForm.trip_type || "قادم",
+      scheduled_start_at: new Date(pForm.scheduled_start_at).toISOString(),
+      employee_codes: codes,
+      employee_statuses: statuses,
+    };
+    const hasToken = typeof window !== "undefined" && !!window.localStorage.getItem("access_token");
+    const saveLocal = (text: string) => {
+      queueAdminPlan({ ...payload, driver_name: driver?.full_name });
+      mergeLocalPlans();
+      setMsg(text);
+    };
+    if (hasToken) {
+      try {
+        const created = await createAdminPlan(payload);
+        setPlanSelected({});
+        setMsg(`تم تخطيط الرحلة ${created.trip_number} وإسناد ${codes.length} موظفاً إليها بنجاح`);
+        await load(true);
+      } catch (err) {
+        if (isNetworkError(err)) {
+          saveLocal(`تعذر الوصول إلى الخادم — حُفظت الرحلة مع ${codes.length} موظفاً على هذا الجهاز محلياً، وستُرسل عند توفر الاتصال (اضغط «إرسال الآن»).`);
+        } else {
+          setMsg(`تعذر حفظ الرحلة — الخادم رفض العملية: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    } else {
+      saveLocal(`وضع دون اتصال — حُفظت الرحلة مع ${codes.length} موظفاً محلياً وستُرسل عند الاتصال بخادم البيانات.`);
+    }
+    setLoading(false);
+  }
+
   const selectedDriver = drivers.find(d => d.driver_code === form.driver_code);
+  const pDriver = drivers.find(d => d.driver_code === pForm.driver_code);
+  const pBuses = buses.filter(b => b.is_active !== false && (!pDriver?.company_code || b.company_code === pDriver.company_code));
+  const pRoutes = routes.filter(r => r.is_active !== false && (!pDriver?.company_code || r.company_code === pDriver.company_code));
+  function selectPDriver(code: string) {
+    const d = drivers.find(x => x.driver_code === code);
+    const comp = d?.company_code;
+    const firstBus = buses.find(b => b.is_active !== false && (!comp || b.company_code === comp));
+    const firstRoute = routes.find(r => r.is_active !== false && (!comp || r.company_code === comp));
+    setPForm((f: any) => ({ ...f, driver_code: code, bus_number: firstBus ? firstBus.number : "", route_name: firstRoute ? firstRoute.name : "", origin: firstRoute ? firstRoute.origin : "", destination: firstRoute ? firstRoute.destination : "" }));
+  }
+  function selectPRoute(name: string) {
+    const r = routes.find(x => x.name === name);
+    setPForm((f: any) => ({ ...f, route_name: name, origin: r?.origin ?? "", destination: r?.destination ?? "" }));
+  }
   const activeBuses = buses.filter(b => b.is_active !== false && (!selectedDriver?.company_code || b.company_code === selectedDriver.company_code));
   const activeRoutes = routes.filter(r => r.is_active !== false && (!selectedDriver?.company_code || r.company_code === selectedDriver.company_code));
 
@@ -707,6 +793,7 @@ export default function AdminPage() {
       </div>
 
       <div className="admin-tabs">
+        <button className={tab === "planner" ? "active" : ""} onClick={() => setTab("planner")}>تخطيط المواصلات</button>
         <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>الرحلات المخططة ({plans.length})</button>
         <button className={tab === "drivers" ? "active" : ""} onClick={() => setTab("drivers")}>السائقون ({drivers.length})</button>
         <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>المستخدمون ({users.length})</button>
@@ -722,6 +809,160 @@ export default function AdminPage() {
         <button className={tab === "compare" ? "active" : ""} onClick={() => setTab("compare")}>المخطط مقابل الفعلي</button>
       </div>
 
+      {tab === "planner" && (() => {
+        const dateValue = planDate || todayIso();
+        const q = planSearch.trim().toLowerCase();
+        const dirType = pForm.trip_type || "قادم";
+        const wantStatus: CycleStatus | null = dirType === "مغادر" ? "departing" : "arriving";
+
+        const housingCounts = new Map<string, number>();
+        const scheduleCounts = new Map<string, number>();
+        for (const e of allEmployees) {
+          const h = String(e.housing_location ?? "").trim();
+          if (h) housingCounts.set(h, (housingCounts.get(h) || 0) + 1);
+          const s = String(e.work_schedule ?? "").trim();
+          if (s) scheduleCounts.set(s, (scheduleCounts.get(s) || 0) + 1);
+        }
+        const housingOptions = Array.from(housingCounts.entries()).sort((a, b) => b[1] - a[1]);
+        const scheduleOptions = Array.from(scheduleCounts.entries()).sort((a, b) => b[1] - a[1]);
+
+        const rows = allEmployees
+          .map((e) => ({ e, cycle: employeeCycle(e, dateValue) }))
+          .filter((x) => x.cycle)
+          .map((x) => ({ e: x.e, cycle: x.cycle as CycleInfo }))
+          .filter((x) => !planHousing || String(x.e.housing_location ?? "").trim() === planHousing)
+          .filter((x) => !planSchedule || String(x.e.work_schedule ?? "").trim() === planSchedule)
+          .filter((x) => !planStatus || x.cycle.status === planStatus)
+          .filter((x) => !q || [x.e.employee_code, x.e.name, x.e.department_name, x.e.company_name, x.e.housing_location, x.e.work_schedule, x.e.schedule_desc].some((v) => String(v ?? "").toLowerCase().includes(q)));
+
+        const selectedCodes = Object.keys(planSelected).filter((c) => planSelected[c]);
+        const allSelected = rows.length > 0 && rows.every((x) => planSelected[String(x.e.employee_code)]);
+        const violating = rows.filter((x) => planSelected[String(x.e.employee_code)] && wantStatus && x.cycle.status !== wantStatus);
+        const statusCounts = new Map<string, number>();
+        for (const x of rows) statusCounts.set(x.cycle.status, (statusCounts.get(x.cycle.status) || 0) + 1);
+        const statusSummary = Array.from(statusCounts.entries()).map(([s, n]) => `${CYCLE_STATUS_OPTIONS.find(o => o.value === s)?.label ?? s} ${n}`).join(" · ") || "—";
+
+        const toggle = (code: string) => setPlanSelected((prev) => ({ ...prev, [code]: !prev[code] }));
+        const toggleAll = () => setPlanSelected((prev) => {
+          const next = { ...prev };
+          if (allSelected) for (const x of rows) delete next[String(x.e.employee_code)];
+          else for (const x of rows) next[String(x.e.employee_code)] = true;
+          return next;
+        });
+
+        return (
+          <>
+            <div className="section-title" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>تخطيط مواصلات الموظفين</h2>
+                <span>صفِّ الموظفين حسب موقع السكن ونظام الدوام وحالة الدورة في تاريخ معيّن (مثل: القادمون صباح يوم قادم من خط الحديدة)، ثم أسنِدهم لرحلة مخططة.</span>
+              </div>
+              <label className="field" style={{ minWidth: 170 }}>
+                <span>تاريخ الرحلة</span>
+                <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} />
+              </label>
+            </div>
+
+            <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+              <label className="field" style={{ minWidth: 150 }}><span>موقع السكن</span>
+                <select value={planHousing} onChange={(e) => setPlanHousing(e.target.value)}>
+                  <option value="">كل مواقع السكن</option>
+                  {housingOptions.map(([name, count]) => <option key={name} value={name}>{name} ({count})</option>)}
+                </select>
+              </label>
+              <label className="field" style={{ minWidth: 230 }}><span>نظام الدوام (جدول العمل)</span>
+                <select value={planSchedule} onChange={(e) => setPlanSchedule(e.target.value)}>
+                  <option value="">كل الأنظمة</option>
+                  {scheduleOptions.map(([name, count]) => <option key={name} value={name}>{name} ({count})</option>)}
+                </select>
+              </label>
+              <label className="field" style={{ minWidth: 150 }}><span>حالة الدورة</span>
+                <select value={planStatus} onChange={(e) => setPlanStatus(e.target.value as CycleStatus | "")}>
+                  {CYCLE_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <div className="input-wrap" style={{ flex: 1, minWidth: 200 }}>
+                <input placeholder="ابحث بالكود أو الاسم أو الإدارة…" value={planSearch} onChange={(e) => setPlanSearch(e.target.value)} />
+              </div>
+              <small className="muted">النتائج: {rows.length} موظف</small>
+            </div>
+
+            <div className="form-panel">
+              <div className="panel-title">
+                <div>
+                  <BusFront size={22} />
+                  <div>
+                    <h2>إسناد الموظفين المحددين إلى رحلة</h2>
+                    <span>بعد التحديد من الجدول بالأسفل، اختر السائق والباص والخط وهدف الرحلة ثم أنشئ الرحلة المخططة.</span>
+                  </div>
+                </div>
+              </div>
+              <div className="form-grid">
+                <label className="field"><span>السائق</span><select value={pForm.driver_code} onChange={e => selectPDriver(e.target.value)}><option value="">— اختر السائق —</option>{drivers.map(d => <option key={d.id} value={d.driver_code ?? ""}>{d.full_name} ({d.driver_code ?? ""})</option>)}</select></label>
+                <label className="field"><span>رقم الباص</span><select value={pForm.bus_number} onChange={e => setPForm((f: any) => ({ ...f, bus_number: e.target.value }))}><option value="">— اختر الباص —</option>{pBuses.map(b => <option key={b.id} value={b.number}>{b.number}{b.plate_number ? ` (${b.plate_number})` : ""}</option>)}</select></label>
+                <label className="field"><span>خط السير</span><select value={pForm.route_name} onChange={e => selectPRoute(e.target.value)}><option value="">— اختر الخط —</option>{pRoutes.map(r => <option key={r.id} value={r.name}>{r.name} ({r.origin} → {r.destination})</option>)}</select></label>
+                <label className="field"><span>هدف الرحلة</span><select value={pForm.trip_type} onChange={e => setPForm((f: any) => ({ ...f, trip_type: e.target.value }))}>{TRIP_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}</select></label>
+                <label className="field"><span>موعد الانطلاق</span><input type="datetime-local" value={pForm.scheduled_start_at} onChange={e => setPForm((f: any) => ({ ...f, scheduled_start_at: e.target.value }))} /></label>
+              </div>
+              {violating.length > 0 && (
+                <div className="alert danger" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <AlertTriangle size={18} />
+                  <span>تنبيه مخالفة: {violating.length} من المحددين حالتهم لا تطابق «{dirType}» في هذا التاريخ (صعود خارج الخطة). يمكنك المتابعة أو تعديل التحديد.</span>
+                </div>
+              )}
+              <button className="primary-btn" onClick={createPlanWithEmployees} disabled={loading || !pForm.driver_code || !pForm.bus_number || !pForm.route_name || !pForm.scheduled_start_at || !selectedCodes.length}>
+                <Plus size={18} />{loading ? "جارٍ الحفظ..." : `تخطيط رحلة بـ ${selectedCodes.length} موظف`}
+              </button>
+            </div>
+
+            <div className="stats-grid">
+              <div className="metric"><div><span>المعروضون</span><strong>{rows.length}</strong></div></div>
+              <div className="metric"><div><span>المحدَّدون</span><strong>{selectedCodes.length}</strong></div></div>
+              <div className="metric"><div><span>مخالفون</span><strong>{violating.length}</strong></div></div>
+              <div className="metric"><div><span>حسب الحالة</span><strong style={{ fontSize: 13 }}>{statusSummary}</strong></div></div>
+            </div>
+
+            <div className="table-card">
+              <div className="table-scroll" style={{ maxHeight: 520 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th><input type="checkbox" checked={allSelected} onChange={toggleAll} title="تحديد الكل" /></th>
+                      <th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>السكن</th><th>نظام الدوام</th><th>حالة الدورة</th><th>المغادرة</th><th>التنبيه</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((x, i) => {
+                      const code = String(x.e.employee_code);
+                      const bad = !!wantStatus && x.cycle.status !== wantStatus;
+                      return (
+                        <tr key={`${code}-${i}`}>
+                          <td><input type="checkbox" checked={!!planSelected[code]} onChange={() => toggle(code)} /></td>
+                          <td>{i + 1}</td>
+                          <td>{x.e.employee_code || "—"}</td>
+                          <td><strong>{x.e.name || "—"}</strong></td>
+                          <td>{x.e.department_name || "—"}</td>
+                          <td>{x.e.housing_location || "—"}</td>
+                          <td><span className="stack-cell"><strong>{x.e.schedule_desc || x.e.work_schedule || "—"}</strong>{x.e.work_schedule && <small>جدول {x.e.work_schedule}</small>}</span></td>
+                          <td><CycleBadge info={x.cycle} withPosition /></td>
+                          <td>{x.e.departure_time || "—"}</td>
+                          <td>{bad ? <span className="status status-cancelled">مخالف</span> : <span className="status status-completed">مطابق</span>}</td>
+                        </tr>
+                      );
+                    })}
+                    {!rows.length && (
+                      <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                        {allEmployees.length ? "لا يوجد موظفون مطابقون لهذا الفلتر/التاريخ." : "لا توجد بيانات موظفين — ارفع كشف الموظفين مع نظام الدوام من تبويب «الموظفون»."}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
       {tab === "plans" && (
         <>
           {plans.filter((p: any) => p.local).length > 0 && (
@@ -734,7 +975,7 @@ export default function AdminPage() {
             <div className="table-scroll">
               <table>
                 <thead>
-                  <tr><th>الرحلة</th><th>السائق</th><th>الباص</th><th>الخط</th><th>النوع</th><th>الموعد</th><th>الحالة</th></tr>
+                  <tr><th>الرحلة</th><th>السائق</th><th>الباص</th><th>الخط</th><th>النوع</th><th>الموعد</th><th>المُسندون</th><th>الحالة</th></tr>
                 </thead>
                 <tbody>
                   {plans.map(p => (
@@ -745,6 +986,7 @@ export default function AdminPage() {
                       <td>{p.route_name}<small>{p.origin} → {p.destination}</small></td>
                       <td>{tripTypeLabel(p.trip_type)}</td>
                       <td>{new Date(p.scheduled_start_at).toLocaleString("ar-EG")}</td>
+                      <td>{p.assigned_employees?.length ? <span className="status status-completed">{p.assigned_employees.length} موظف</span> : "—"}</td>
                       <td>{(p as any).local ? <span className="status status-local">محفوظة محلياً</span> : <StatusBadge status={p.status} />}</td>
                     </tr>
                   ))}

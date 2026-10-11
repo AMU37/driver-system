@@ -161,6 +161,27 @@ class PlannedTrip(Base):
     driver = relationship("User")
     bus = relationship("Bus")
     route = relationship("Route")
+    assigned_employees = relationship("PlannedTripEmployee", back_populates="planned_trip", cascade="all, delete-orphan")
+
+
+class PlannedTripEmployee(Base):
+    """الموظفون الذين أُسندوا لرحلة مخططة مسبقاً (خطة المواصلات قبل انطلاق الرحلة)."""
+    __tablename__ = "planned_trip_employees"
+    __table_args__ = (UniqueConstraint("planned_trip_id", "employee_code", name="uq_planned_trip_employee"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    planned_trip_id: Mapped[int] = mapped_column(ForeignKey("planned_trips.id"), index=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True, index=True)
+    employee_code: Mapped[str] = mapped_column(String(50), index=True)
+    name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    housing_location_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    work_schedule_snapshot: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    schedule_desc_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    departure_time_snapshot: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    cycle_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    planned_trip = relationship("PlannedTrip", back_populates="assigned_employees")
+    employee = relationship("Employee")
 
 
 class Trip(Base):

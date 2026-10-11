@@ -34,6 +34,18 @@ def planned_out(item: PlannedTrip) -> dict:
         "route_name": item.route.name if item.route else None,
         "origin": item.route.origin if item.route else None,
         "destination": item.route.destination if item.route else None,
+        "assigned_employees": [
+            {
+                "employee_code": pe.employee_code,
+                "name": pe.name_snapshot,
+                "housing_location": pe.housing_location_snapshot,
+                "work_schedule": pe.work_schedule_snapshot,
+                "schedule_desc": pe.schedule_desc_snapshot,
+                "departure_time": pe.departure_time_snapshot,
+                "cycle_status": pe.cycle_status,
+            }
+            for pe in item.assigned_employees
+        ],
     }
 
 
@@ -42,7 +54,7 @@ def dashboard(user: User = Depends(require_roles(UserRole.driver)), db: Session 
     # DB stores naive UTC datetimes; use a naive UTC "now" for comparisons.
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     planned = db.scalars(
-        select(PlannedTrip).options(selectinload(PlannedTrip.bus), selectinload(PlannedTrip.route)).where(
+        select(PlannedTrip).options(selectinload(PlannedTrip.bus), selectinload(PlannedTrip.route), selectinload(PlannedTrip.assigned_employees)).where(
             PlannedTrip.driver_id == user.id,
             PlannedTrip.scheduled_start_at >= now,
             PlannedTrip.status.in_([TripStatus.planned, TripStatus.available]),
@@ -69,7 +81,7 @@ def dashboard(user: User = Depends(require_roles(UserRole.driver)), db: Session 
 
 @router.get("/planned", response_model=list[PlannedTripOut])
 def planned_trips(user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
-    items = db.scalars(select(PlannedTrip).options(selectinload(PlannedTrip.bus), selectinload(PlannedTrip.route)).where(PlannedTrip.driver_id == user.id).order_by(PlannedTrip.scheduled_start_at.desc()).limit(100)).all()
+    items = db.scalars(select(PlannedTrip).options(selectinload(PlannedTrip.bus), selectinload(PlannedTrip.route), selectinload(PlannedTrip.assigned_employees)).where(PlannedTrip.driver_id == user.id).order_by(PlannedTrip.scheduled_start_at.desc()).limit(100)).all()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     changed = False
     for item in items:

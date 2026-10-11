@@ -475,6 +475,8 @@ export type LocalAdminPlan = {
   company_code?: string | null;
   scheduled_start_at: string;
   release_hours?: number;
+  employee_codes?: string[];
+  employee_statuses?: Record<string, string>;
   created_at: string;
 };
 

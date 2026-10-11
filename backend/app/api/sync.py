@@ -72,6 +72,21 @@ def sync_snapshot(user: User = Depends(get_current_user), db: Session = Depends(
         }
         for r in db.execute(text("SELECT id, username, full_name, role, driver_code, company_code FROM users WHERE role IN ('driver', 'supervisor', 'admin') ORDER BY username"))
     ]
+    assigned_by_plan: dict[int, list[dict]] = {}
+    for r in db.execute(text(
+        """
+        SELECT pe.planned_trip_id, pe.employee_code, pe.name_snapshot, pe.housing_location_snapshot,
+               pe.work_schedule_snapshot, pe.schedule_desc_snapshot, pe.departure_time_snapshot, pe.cycle_status
+        FROM planned_trip_employees pe
+        JOIN planned_trips p ON p.id = pe.planned_trip_id
+        """
+    )):
+        assigned_by_plan.setdefault(r.planned_trip_id, []).append({
+            "employee_code": r.employee_code, "name": r.name_snapshot,
+            "housing_location": r.housing_location_snapshot, "work_schedule": r.work_schedule_snapshot,
+            "schedule_desc": r.schedule_desc_snapshot, "departure_time": r.departure_time_snapshot,
+            "cycle_status": r.cycle_status,
+        })
     planned = [
         {
             "id": r.id, "external_id": r.external_id, "trip_number": r.trip_number, "driver_id": r.driver_id,
@@ -81,6 +96,7 @@ def sync_snapshot(user: User = Depends(get_current_user), db: Session = Depends(
             "trip_type": r.trip_type,
             "trip_date": _norm(r.trip_date), "release_at": _norm(r.release_at),
             "scheduled_start_at": _norm(r.scheduled_start_at), "status": r.status,
+            "assigned_employees": assigned_by_plan.get(r.id, []),
         }
         for r in db.execute(text(
             """
