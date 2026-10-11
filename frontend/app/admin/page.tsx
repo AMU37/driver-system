@@ -14,12 +14,12 @@ import {
 } from "@/lib/api";
 import { AlertTriangle, ArchiveRestore, BusFront, ChevronDown, ChevronUp, ClipboardList, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck, Users } from "lucide-react";
 import { useAuthGuard } from "@/lib/authGuard";
-import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot } from "@/lib/offlineStore";
+import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot, type TripType } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, openReportTripWhatsApp, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText } from "@/lib/export";
 import { employeeCycle, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
 
-type Tab = "plans" | "planner" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
+type Tab = "plans" | "planner" | "daily" | "actual" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
 
 const CYCLE_STATUS_OPTIONS: { value: CycleStatus | ""; label: string }[] = [
   { value: "", label: "كل الحالات" },
@@ -75,6 +75,79 @@ function boardedCodesForDate(reports: any[], dateValue: string): Set<string> {
   return codes;
 }
 
+/** نوع حركة التقرير (قادم/مغادر) من الحقل العلوي أو داخل الرحلة. */
+function reportTypeOf(report: any): TripType {
+  const { trip } = reportTripOf(report);
+  return normalizeTripType(report?.trip_type || trip?.trip_type);
+}
+
+/** تقارير الرحلات التي وقع تاريخها في يوم معيّن. */
+function reportsForDate(reports: any[], dateValue: string): any[] {
+  const target = toDayIndex(dateValue);
+  if (target === null) return [];
+  return reports.filter((r) => {
+    const raw = reportTripDateRaw(r);
+    return raw !== null && toDayIndex(raw) === target;
+  });
+}
+
+export type ActualRow = {
+  code: string;
+  name: string;
+  housing: string;
+  department: string;
+  driver: string;
+  bus: string;
+  route: string;
+  tripNumber: string;
+  tripType: TripType;
+  boardedAt: string;
+  source: string;
+  status: "match" | "violation" | "unknown" | "nonemp";
+  cycle: CycleInfo | null;
+};
+
+/** قائمة الصاعدين الفعليين في تاريخ معيّن مع اسم السائق/الباص/الخط وحالة المطابقة. */
+function actualRowsForDate(reports: any[], dateValue: string, employees: any[]): ActualRow[] {
+  const rows: ActualRow[] = [];
+  const byCode = new Map<string, any>();
+  for (const e of employees) byCode.set(String(e.employee_code), e);
+  for (const r of reportsForDate(reports, dateValue)) {
+    const { trip, employees: passengers } = reportTripOf(r);
+    const type = reportTypeOf(r);
+    const bus = String(trip.bus_number || "—");
+    const route = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || r.route || "—");
+    const driver = r.driver_name || r.driver_username || "—";
+    const tripNumber = r.trip_number || trip.trip_id || "—";
+    const want: CycleStatus = type === "قادم" ? "arriving" : "departing";
+    for (const p of passengers) {
+      const code = p.employee_code ? String(p.employee_code) : "";
+      const emp = code ? byCode.get(code) || null : null;
+      const cycle = emp ? employeeCycle(emp, dateValue) : null;
+      let status: ActualRow["status"];
+      if (p.source === "non_employee") status = "nonemp";
+      else if (!emp || !cycle) status = "unknown";
+      else status = cycle.status === want ? "match" : "violation";
+      rows.push({
+        code,
+        name: p.name || emp?.name || "—",
+        housing: p.housing_location || emp?.housing_location || "—",
+        department: p.department || emp?.department_name || "—",
+        driver,
+        bus,
+        route,
+        tripNumber,
+        tripType: type,
+        boardedAt: p.boarded_at || "",
+        source: p.source || "",
+        status,
+        cycle,
+      });
+    }
+  }
+  return rows;
+}
+
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 /** الرحلة القديمة المخططة قبل إضافة النوع لا تُعرض كنوع محدد. */
@@ -106,6 +179,10 @@ export default function AdminPage() {
   const [cycleDate, setCycleDate] = useState<string>(todayIso());
   const [cycleSearch, setCycleSearch] = useState("");
   const [cycleOnlyMissing, setCycleOnlyMissing] = useState(false);
+  const [dailyDate, setDailyDate] = useState<string>(todayIso());
+  const [actualDate, setActualDate] = useState<string>(todayIso());
+  const [actualSearch, setActualSearch] = useState("");
+  const [actualOnlyViolation, setActualOnlyViolation] = useState(false);
   const [planDate, setPlanDate] = useState<string>(todayIso());
   const [planHousing, setPlanHousing] = useState("");
   const [planSchedule, setPlanSchedule] = useState("");
@@ -256,8 +333,16 @@ export default function AdminPage() {
     }
   }
   async function fallbackSnapshot() {
-    const s = getCachedSnapshot() ?? null;
-    if (!s) return;
+    let s: Snapshot | null = null;
+    try {
+      s = await loadSnapshot();
+    } catch {
+      s = getCachedSnapshot() ?? null;
+    }
+    if (!s) {
+      setMsg("لا توجد نسخة بيانات محلية بعد — اتصل بالخادم مرة واحدة عبر الشبكة ثم سجّل الدخول لتنزيل بيانات الموظفين.");
+      return;
+    }
     setDrivers(s.drivers.map(mapSnapshotDriver));
     setUsers(s.drivers.map(mapSnapshotUsers));
     setPlans(s.planned.map(mapSnapshotPlanned));
@@ -806,6 +891,8 @@ export default function AdminPage() {
         <button className={tab === "housing" ? "active" : ""} onClick={() => setTab("housing")}>السكن ({housing.length})</button>
         <button className={tab === "new" ? "active" : ""} onClick={() => setTab("new")}>طلبات الموظفين الجدد ({newEmployees.length})</button>
         <button className={tab === "trips" ? "active" : ""} onClick={() => setTab("trips")}>رحلات السائقين ({reports.length})</button>
+        <button className={tab === "daily" ? "active" : ""} onClick={() => setTab("daily")}>الخطة اليومية (تلقائي)</button>
+        <button className={tab === "actual" ? "active" : ""} onClick={() => setTab("actual")}>الموظفون الفعليون</button>
         <button className={tab === "compare" ? "active" : ""} onClick={() => setTab("compare")}>المخطط مقابل الفعلي</button>
       </div>
 
@@ -1294,6 +1381,196 @@ export default function AdminPage() {
           })()}
         </>
       )}
+
+      {tab === "daily" && (() => {
+        const dateValue = dailyDate || todayIso();
+        type Agg = { pArr: number; pDep: number; pWork: number; aArr: number; aDep: number; aBus: Set<string>; dBus: Set<string> };
+        const lines = new Map<string, Agg>();
+        const ensure = (key: string): Agg => {
+          let a = lines.get(key);
+          if (!a) { a = { pArr: 0, pDep: 0, pWork: 0, aArr: 0, aDep: 0, aBus: new Set(), dBus: new Set() }; lines.set(key, a); }
+          return a;
+        };
+        const lineOf = (value: any) => String(value ?? "").trim() || "غير محدد";
+        for (const e of allEmployees) {
+          const c = employeeCycle(e, dateValue);
+          if (!c) continue;
+          const a = ensure(lineOf(e.housing_location));
+          if (c.status === "arriving") a.pArr += 1;
+          else if (c.status === "departing") a.pDep += 1;
+          else if (c.status === "working") a.pWork += 1;
+        }
+        let tripsArriving = 0;
+        let tripsDeparting = 0;
+        const dayReports = reportsForDate(reports, dateValue);
+        for (const r of dayReports) {
+          const { trip, employees: passengers } = reportTripOf(r);
+          const type = reportTypeOf(r);
+          if (type === "قادم") tripsArriving += 1; else tripsDeparting += 1;
+          for (const p of passengers) {
+            if (p.source === "non_employee") continue;
+            const a = ensure(lineOf(p.housing_location));
+            if (type === "قادم") { a.aArr += 1; a.aBus.add(String(trip.bus_number || "—")); }
+            else { a.aDep += 1; a.dBus.add(String(trip.bus_number || "—")); }
+          }
+        }
+        const rows = Array.from(lines.entries())
+          .map(([line, a]) => ({ line, ...a }))
+          .sort((x, y) => (y.pArr + y.pDep + y.aArr + y.aDep) - (x.pArr + x.pDep + x.aArr + x.aDep));
+        const sum = (pick: (a: Agg) => number) => rows.reduce((n, r) => n + pick(r), 0);
+        const pArr = sum((a) => a.pArr), aArr = sum((a) => a.aArr);
+        const pDep = sum((a) => a.pDep), aDep = sum((a) => a.aDep);
+        const busList = (set: Set<string>) => (set.size ? Array.from(set).join("، ") : "—");
+        const diffCell = (d: number) => (d === 0
+          ? <span className="status status-completed">0</span>
+          : <span className={`status ${d > 0 ? "status-received" : "status-cancelled"}`}>{d > 0 ? `+${d}` : d}</span>);
+        return (
+          <>
+            <div className="section-title" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>الخطة اليومية التلقائية</h2>
+                <span>تُحسب خطة القادمين والمغادرين لكل خط (موقع السكن) من دورية كل موظف تلقائياً — بلا ربطها بأي سائق — وتُقارن فوراً بالرحلات الفعلية الواردة من تقارير السائقين في نفس اليوم.</span>
+              </div>
+              <label className="field" style={{ minWidth: 190 }}>
+                <span>تاريخ اليوم</span>
+                <input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} />
+              </label>
+            </div>
+            <div className="stats-grid">
+              <div className="metric"><div><span>قادم مخطط</span><strong>{pArr}</strong></div></div>
+              <div className="metric"><div><span>قادم فعلي</span><strong>{aArr}</strong></div></div>
+              <div className="metric"><div><span>مغادر مخطط</span><strong>{pDep}</strong></div></div>
+              <div className="metric"><div><span>مغادر فعلي</span><strong>{aDep}</strong></div></div>
+            </div>
+            <div className="alert success" style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+              <span>رحلات قادمة فعلية: <strong>{tripsArriving}</strong></span>
+              <span>رحلات مغادرة فعلية: <strong>{tripsDeparting}</strong></span>
+              <span>إجمالي الخطوط: <strong>{rows.length}</strong></span>
+            </div>
+            <div className="table-card">
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>الخط (السكن)</th>
+                      <th>قادم مخطط</th><th>قادم فعلي</th><th>فرق</th>
+                      <th>مغادر مخطط</th><th>مغادر فعلي</th><th>فرق</th>
+                      <th>مداوم</th>
+                      <th>باصات قادمة</th><th>باصات مغادرة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((a) => (
+                      <tr key={a.line}>
+                        <td><strong>{a.line}</strong></td>
+                        <td>{a.pArr}</td>
+                        <td>{a.aArr}</td>
+                        <td>{diffCell(a.aArr - a.pArr)}</td>
+                        <td>{a.pDep}</td>
+                        <td>{a.aDep}</td>
+                        <td>{diffCell(a.aDep - a.pDep)}</td>
+                        <td>{a.pWork}</td>
+                        <td>{busList(a.aBus)}</td>
+                        <td>{busList(a.dBus)}</td>
+                      </tr>
+                    ))}
+                    {!rows.length && (
+                      <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                        {allEmployees.length ? "لا توجد بيانات لهذا اليوم." : "لا توجد بيانات موظفين بعد — ارفع كشف الموظفين من تبويب «الموظفون»."}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {tab === "actual" && (() => {
+        const dateValue = actualDate || todayIso();
+        const q = actualSearch.trim().toLowerCase();
+        const dayReports = reportsForDate(reports, dateValue);
+        const all = actualRowsForDate(reports, dateValue, allEmployees);
+        const rows = all
+          .filter((r) => !q || [r.code, r.name, r.housing, r.department, r.driver, r.bus, r.route, r.tripNumber].some((v) => String(v ?? "").toLowerCase().includes(q)))
+          .filter((r) => !actualOnlyViolation || r.status === "violation");
+        const count = (s: ActualRow["status"]) => all.filter((r) => r.status === s).length;
+        const statusCell = (r: ActualRow) => {
+          if (r.status === "nonemp") return <span className="status status-planned">غير موظف</span>;
+          if (r.status === "unknown") return <span className="status status-needs_review">غير مسجّل في الكشف</span>;
+          if (r.status === "match") return <span className="status status-completed">حسب الخطة</span>;
+          return <span className="status status-cancelled">مخالف</span>;
+        };
+        return (
+          <>
+            <div className="section-title" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>الموظفون الفعليون (الصاعدون)</h2>
+                <span>كل من صعد فعلاً في رحلات يوم معيّن، مع اسم السائق ورقم الباص والمسار، وتحديد إن كان حسب خطة دوريته أم مخالفاً.</span>
+              </div>
+              <div className="row-actions" style={{ alignItems: "flex-end" }}>
+                <label className="field" style={{ minWidth: 180 }}>
+                  <span>تاريخ الرحلة</span>
+                  <input type="date" value={actualDate} onChange={(e) => setActualDate(e.target.value)} />
+                </label>
+                <button className="secondary-btn" onClick={() => load(true)} disabled={loading}><RefreshCw size={16} />تحديث</button>
+              </div>
+            </div>
+            <div className="stats-grid">
+              <div className="metric"><div><span>إجمالي الصاعدين</span><strong>{all.length}</strong></div></div>
+              <div className="metric"><div><span>حسب الخطة</span><strong>{count("match")}</strong></div></div>
+              <div className="metric"><div><span>مخالفون</span><strong>{count("violation")}</strong></div></div>
+              <div className="metric"><div><span>غير مسجّلين/غير موظفين</span><strong>{count("unknown") + count("nonemp")}</strong></div></div>
+            </div>
+            <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+              <div className="input-wrap" style={{ flex: 1, minWidth: 220 }}>
+                <input placeholder="ابحث بالكود أو الاسم أو السكن أو السائق أو الباص…" value={actualSearch} onChange={(e) => setActualSearch(e.target.value)} />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <input type="checkbox" checked={actualOnlyViolation} onChange={(e) => setActualOnlyViolation(e.target.checked)} />
+                <span>إظهار المخالفين فقط</span>
+              </label>
+              <small className="muted">الرحلات الفعلية لهذا اليوم: {dayReports.length}</small>
+            </div>
+            <div className="table-card">
+              <div className="table-scroll" style={{ maxHeight: 560 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th><th>الكود</th><th>الاسم</th><th>الخط (السكن)</th><th>الإدارة</th>
+                      <th>السائق</th><th>الباص</th><th>المسار</th><th>الرحلة</th><th>النوع</th><th>وقت الصعود</th><th>المطابقة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={`${r.tripNumber}-${r.code}-${i}`}>
+                        <td>{i + 1}</td>
+                        <td>{r.code || "—"}</td>
+                        <td><strong>{r.name || "—"}</strong></td>
+                        <td>{r.housing || "—"}</td>
+                        <td>{r.department || "—"}</td>
+                        <td>{r.driver}</td>
+                        <td>{r.bus}</td>
+                        <td>{r.route}</td>
+                        <td>{r.tripNumber}</td>
+                        <td>{r.tripType}</td>
+                        <td>{r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "—"}</td>
+                        <td>{statusCell(r)}</td>
+                      </tr>
+                    ))}
+                    {!rows.length && (
+                      <tr><td colSpan={12} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                        لا يوجد صاعدون فعليون لهذا التاريخ/الفلتر — ستظهر الحالات هنا فور وصول تقارير رحلات السائقين.
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {tab === "compare" && (() => {
         const dateValue = cycleDate || todayIso();

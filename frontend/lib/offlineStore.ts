@@ -270,13 +270,35 @@ async function authorizedRequest(
 /* ---------- snapshot ---------- */
 let snapshotMem: Snapshot | null = null;
 
+/** يفضّل اللقطة الأحدث (أكثر موظفين ثم أحدث تاريخ بناء) — يمنع بقاء نسخة قديمة بعد تحديث التطبيق. */
+function isNewerSnapshot(a: Snapshot, b: Snapshot): boolean {
+  const aEmp = a.counts?.employees ?? (Array.isArray(a.employees) ? a.employees.length : 0);
+  const bEmp = b.counts?.employees ?? (Array.isArray(b.employees) ? b.employees.length : 0);
+  if (aEmp !== bEmp) return aEmp > bEmp;
+  const at = Date.parse(a.built_at || "") || 0;
+  const bt = Date.parse(b.built_at || "") || 0;
+  return at > bt;
+}
+
 export async function loadSnapshot(): Promise<Snapshot> {
-  const mem = getCachedSnapshot();
-  if (mem) return mem;
-  const res = await fetch("/data/snapshot.json", { cache: "force-cache" });
-  const data = (await res.json()) as Snapshot;
-  storeSnapshot(data);
-  return data;
+  if (snapshotMem) return snapshotMem;
+  const cached = loadJSON<Snapshot | null>(KEY_SNAPSHOT, null);
+  try {
+    // الملف مضمّن في التطبيق؛ مقارنته بالمخزّن تضمن تحديث البيانات بعد كل إصدار.
+    const res = await fetch("/data/snapshot.json", { cache: "no-cache" });
+    const bundled = (await res.json()) as Snapshot;
+    if (bundled && Array.isArray(bundled.employees) && (!cached || isNewerSnapshot(bundled, cached))) {
+      storeSnapshot(bundled);
+      return bundled;
+    }
+  } catch {
+    /* تجاهل — نستخدم المخزّن إن وُجد */
+  }
+  if (cached) {
+    snapshotMem = cached;
+    return cached;
+  }
+  throw new Error("تعذر تحميل نسخة البيانات المحلية");
 }
 export function getCachedSnapshot(): Snapshot | null {
   if (snapshotMem) return snapshotMem;
