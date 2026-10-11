@@ -17,8 +17,9 @@ import { useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, openReportTripWhatsApp, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText } from "@/lib/export";
+import { employeeCycle, toDayIndex, type CycleInfo } from "@/lib/cycle";
 
-type Tab = "plans" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips";
+type Tab = "plans" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
 
 const BOOL_OPTIONS = [{ value: true, label: "نشط" }, { value: false, label: "معطّل" }];
 const YESNO = (v: any) => (v ? "نشط" : "معطّل");
@@ -32,6 +33,40 @@ const mapSnapshotPlanned = (p: any) => ({ ...p, driver_username: p.driver_userna
 const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", work_schedule: e.work_schedule ?? "", schedule_desc: e.schedule_desc ?? "", work_days: e.work_days ?? null, rest_days: e.rest_days ?? null, first_work_day: e.first_work_day ?? "", rotation_status: e.rotation_status ?? "", departure_time: e.departure_time ?? "", gender: e.gender ?? "", service_type: e.service_type ?? "", transport_type: e.transport_type ?? "", cycle_day_today: e.cycle_day_today ?? null, base_status_today: e.base_status_today ?? "", cycle_day_tomorrow: e.cycle_day_tomorrow ?? null, is_active: e.is_active });
 const mapSnapshotBus = (b: any) => ({ id: b.id, number: b.number, plate_number: b.plate_number ?? "", capacity: b.capacity, company_code: b.company_code, is_active: b.is_active });
 const mapSnapshotRoute = (r: any) => ({ id: r.id, name: r.name, origin: r.origin ?? "", destination: r.destination ?? "", company_code: r.company_code, is_active: r.is_active });
+
+/** شارة الحالة الدورية للموظف (قادم/مداوم/مغادر/إجازة/ترتيب مواصلات). */
+function CycleBadge({ info, withPosition = false }: { info: CycleInfo | null; withPosition?: boolean }) {
+  if (!info) return <small className="muted">بدون بيانات دورة</small>;
+  return (
+    <span className={`status status-${info.badge}`} title={`الموقع داخل الدورة: ${info.positionInCycle + 1} من ${info.cycleLen}`}>
+      {info.label}{withPosition ? ` (${info.positionInCycle + 1}/${info.cycleLen})` : ""}
+    </span>
+  );
+}
+
+/** تاريخ الرحلة المرجعي لحساب الدورة (الانطلاق المخطط ثم البداية ثم الإكمال). */
+function reportTripDateRaw(report: any): string | null {
+  const { trip } = reportTripOf(report);
+  return trip.scheduled_start_at || trip.started_at || trip.completed_at || report.received_at || null;
+}
+
+/** أكواد الموظفين الذين صعدوا فعلاً في رحلات تاريخ معيّن. */
+function boardedCodesForDate(reports: any[], dateValue: string): Set<string> {
+  const target = toDayIndex(dateValue);
+  const codes = new Set<string>();
+  if (target === null) return codes;
+  for (const r of reports) {
+    const raw = reportTripDateRaw(r);
+    if (raw === null || toDayIndex(raw) !== target) continue;
+    const { employees } = reportTripOf(r);
+    for (const p of employees) {
+      if (p && p.employee_code) codes.add(String(p.employee_code));
+    }
+  }
+  return codes;
+}
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 /** الرحلة القديمة المخططة قبل إضافة النوع لا تُعرض كنوع محدد. */
 export const tripTypeLabel = (value?: string | null) => {
@@ -49,6 +84,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [plans, setPlans] = useState<PlannedTrip[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
+  const [allEmployees, setAllEmployees] = useState<any[]>([]);
   const [newEmployees, setNewEmployees] = useState<any[]>([]);
   const [buses, setBuses] = useState<any[]>([]);
   const [routes, setRoutes] = useState<any[]>([]);
@@ -58,6 +94,9 @@ export default function AdminPage() {
   const [housing, setHousing] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [viewReport, setViewReport] = useState<any | null>(null);
+  const [cycleDate, setCycleDate] = useState<string>(todayIso());
+  const [cycleSearch, setCycleSearch] = useState("");
+  const [cycleOnlyMissing, setCycleOnlyMissing] = useState(false);
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [empSearch, setEmpSearch] = useState("");
@@ -105,6 +144,7 @@ export default function AdminPage() {
     setDrivers(vals[0] ?? (snap ? snap.drivers.map(mapSnapshotDriver) : []));
     setPlans(vals[1] ?? (snap ? snap.planned.map(mapSnapshotPlanned) : []));
     setEmployees(vals[2] ?? (snap ? snap.employees.map(mapSnapshotEmployee) : []));
+    setAllEmployees(vals[2] ?? (snap ? snap.employees.map(mapSnapshotEmployee) : []));
     setNewEmployees(vals[3] ?? []);
     setBuses(vals[4] ?? (snap ? snap.buses.map(mapSnapshotBus) : []));
     setRoutes(vals[5] ?? (snap ? (snap.routes ?? []).map(mapSnapshotRoute) : []));
@@ -204,6 +244,7 @@ export default function AdminPage() {
     setUsers(s.drivers.map(mapSnapshotUsers));
     setPlans(s.planned.map(mapSnapshotPlanned));
     setEmployees(s.employees.map(mapSnapshotEmployee));
+    setAllEmployees(s.employees.map(mapSnapshotEmployee));
     setNewEmployees([]);
     setBuses(s.buses.map(mapSnapshotBus));
     setRoutes((s.routes ?? []).map(mapSnapshotRoute));
@@ -248,6 +289,7 @@ export default function AdminPage() {
     setDrivers((prev) => applyAdminOps("driver", prev) as any[]);
     setCompanies((prev) => applyAdminOps("company", prev) as any[]);
     setEmployees((prev) => applyAdminOps("employee", prev) as any[]);
+    setAllEmployees((prev) => applyAdminOps("employee", prev) as any[]);
   }
   async function localSave(entity: AdminEntity, payload: Record<string, any>, id: number | string | undefined, online: (pp: Record<string, any>, iid: number | string | undefined) => Promise<void>, label: string) {
     if (isLocalRowId(id)) {
@@ -677,6 +719,7 @@ export default function AdminPage() {
         <button className={tab === "housing" ? "active" : ""} onClick={() => setTab("housing")}>السكن ({housing.length})</button>
         <button className={tab === "new" ? "active" : ""} onClick={() => setTab("new")}>طلبات الموظفين الجدد ({newEmployees.length})</button>
         <button className={tab === "trips" ? "active" : ""} onClick={() => setTab("trips")}>رحلات السائقين ({reports.length})</button>
+        <button className={tab === "compare" ? "active" : ""} onClick={() => setTab("compare")}>المخطط مقابل الفعلي</button>
       </div>
 
       {tab === "plans" && (
@@ -901,7 +944,14 @@ export default function AdminPage() {
               ["وصول التقرير", f(viewReport.received_at)],
               ["الحالة", reportStatusLabel(viewReport.integration_status)],
             ];
-            const scheduleOf = (empCode: string) => employees.find((e) => e.employee_code === empCode) || null;
+            const scheduleOf = (empCode: string) => allEmployees.find((e) => e.employee_code === empCode) || null;
+            const tripDateRaw = reportTripDateRaw(viewReport);
+            const dayBoard = boardedCodesForDate(reports, tripDateRaw || "");
+            const plannedEmployees = tripDateRaw ? allEmployees.filter((e) => employeeCycle(e, tripDateRaw)?.isWorkDay) : [];
+            const plannedCodes = new Set(plannedEmployees.map((e) => String(e.employee_code)));
+            const plannedBoarded = plannedEmployees.filter((e) => dayBoard.has(String(e.employee_code))).length;
+            const plannedMissing = plannedEmployees.length - plannedBoarded;
+            const extraBoarded = Array.from(dayBoard).filter((c) => !plannedCodes.has(c)).length;
             const scheduleCell = (empCode: string) => {
               const s = scheduleOf(empCode);
               if (!s) return <small className="muted">غير مسجّل في الكشف</small>;
@@ -915,6 +965,20 @@ export default function AdminPage() {
               if (s.work_days !== null && s.work_days !== undefined) bits.push(`${s.work_days} عمل / ${s.rest_days ?? 0} راحة`);
               if (s.departure_time) bits.push(`مغادرة ${s.departure_time}`);
               return <span className="stack-cell"><strong>{bits[0] || "—"}</strong>{bits.slice(1).map((b, i) => <small key={i}>{b}</small>)}</span>;
+            };
+            const matchCell = (p: any) => {
+              if (!p.employee_code) return <small className="muted">غير موظف</small>;
+              const emp = scheduleOf(String(p.employee_code));
+              if (!emp) return <small className="muted">غير مسجّل في الكشف</small>;
+              const cycle = employeeCycle(emp, tripDateRaw || todayIso());
+              if (!cycle) return <small className="muted">بلا دورة</small>;
+              return cycle.isWorkDay
+                ? <span className="status status-completed">مطابق الخطة</span>
+                : <span className="status status-cancelled">صعد بلا خطة</span>;
+            };
+            const cycleCell = (p: any) => {
+              if (!p.employee_code) return <span className="status status-planned">—</span>;
+              return <CycleBadge info={employeeCycle(scheduleOf(String(p.employee_code)), tripDateRaw || todayIso())} withPosition />;
             };
             return (
               <div className="modal-backdrop" onClick={() => setViewReport(null)}>
@@ -933,10 +997,19 @@ export default function AdminPage() {
                       ))}
                     </div>
                     <h3 className="report-list-title">الصاعدون ({reportEmployees.length}) — المطابقة مع خطة دوام كل موظف</h3>
+                    {tripDateRaw && (
+                      <div className="alert success" style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between" }}>
+                        <span>المخطط لهذا اليوم (يوم عمل): <strong>{plannedEmployees.length}</strong></span>
+                        <span>صعدوا من المخطط: <strong>{plannedBoarded}</strong></span>
+                        <span>لم يصعدوا: <strong>{plannedMissing}</strong></span>
+                        <span>صعدوا بدون خطة: <strong>{extraBoarded}</strong></span>
+                        <button className="link-btn" onClick={() => { setCycleDate(tripDateRaw.slice(0, 10)); setTab("compare"); setViewReport(null); }}>القائمة الكاملة في «المخطط مقابل الفعلي» ←</button>
+                      </div>
+                    )}
                     <div className="table-scroll" style={{ maxHeight: 260 }}>
                       <table>
                         <thead>
-                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>خطة الدوام (للمقارنة)</th><th>الحالة</th></tr>
+                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>خطة الدوام</th><th>حالة الدورة</th><th>مطابقة الخطة</th><th>الحالة</th></tr>
                         </thead>
                         <tbody>
                           {reportEmployees.map((p, i) => (
@@ -948,11 +1021,13 @@ export default function AdminPage() {
                               <td>{p.company || "—"}</td>
                               <td>{p.housing_location || "—"}</td>
                               <td>{p.employee_code ? scheduleCell(p.employee_code) : <small className="muted">غير موظف</small>}</td>
+                              <td>{cycleCell(p)}</td>
+                              <td>{matchCell(p)}</td>
                               <td>{reportEmployeeStatus(p)}</td>
                             </tr>
                           ))}
                           {!reportEmployees.length && (
-                            <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
+                            <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
                           )}
                         </tbody>
                       </table>
@@ -977,6 +1052,134 @@ export default function AdminPage() {
           })()}
         </>
       )}
+
+      {tab === "compare" && (() => {
+        const dateValue = cycleDate || todayIso();
+        const planned = allEmployees
+          .map((e) => ({ emp: e, cycle: employeeCycle(e, dateValue) }))
+          .filter((x) => x.cycle && x.cycle.isWorkDay)
+          .map((x) => ({ ...x.emp, cycle: x.cycle as CycleInfo }));
+        const boardedCodes = boardedCodesForDate(reports, dateValue);
+        const q = cycleSearch.trim().toLowerCase();
+        const match = (e: any) => !q || [e.employee_code, e.name, e.department_name, e.company_name, e.housing_location]
+          .some((v) => String(v ?? "").toLowerCase().includes(q));
+        const plannedRows = planned
+          .map((e: any) => ({ ...e, boarded: boardedCodes.has(String(e.employee_code)) }))
+          .filter(match)
+          .filter((e: any) => !cycleOnlyMissing || !e.boarded);
+        const plannedCodes = new Set(planned.map((e: any) => String(e.employee_code)));
+        const plannedBoarded = planned.filter((e: any) => boardedCodes.has(String(e.employee_code))).length;
+        const missing = planned.length - plannedBoarded;
+        const targetIdx = toDayIndex(dateValue);
+        const extraMap = new Map<string, any>();
+        for (const r of reports) {
+          const raw = reportTripDateRaw(r);
+          if (targetIdx === null || raw === null || toDayIndex(raw) !== targetIdx) continue;
+          const { employees } = reportTripOf(r);
+          for (const p of employees) {
+            const code = p && p.employee_code ? String(p.employee_code) : "";
+            if (!code || plannedCodes.has(code) || extraMap.has(code)) continue;
+            extraMap.set(code, p);
+          }
+        }
+        const extraRows = Array.from(extraMap.values());
+        return (
+          <>
+            <div className="section-title" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>المخطط مقابل الفعلي</h2>
+                <span>الموظفون الذين تقول دوريتهم إنهم في يوم عمل بتاريخ الرحلة، مقابل من صعد فعلاً في تقارير السائقين لنفس التاريخ (طريقة مطابقة GhithOps).</span>
+              </div>
+              <div className="row-actions" style={{ alignItems: "flex-end" }}>
+                <label className="field" style={{ minWidth: 190 }}>
+                  <span>تاريخ المقارنة</span>
+                  <input type="date" value={cycleDate} onChange={(e) => setCycleDate(e.target.value)} />
+                </label>
+                <button className="secondary-btn" onClick={() => load(true)} disabled={loading}><RefreshCw size={16} />تحديث</button>
+              </div>
+            </div>
+            <div className="stats-grid">
+              <div className="metric"><div><span>المخطط (يوم عمل)</span><strong>{planned.length}</strong></div></div>
+              <div className="metric"><div><span>صعد من المخطط</span><strong>{plannedBoarded}</strong></div></div>
+              <div className="metric"><div><span>لم يصعد (مخطط)</span><strong>{missing}</strong></div></div>
+              <div className="metric"><div><span>صعد بدون خطة</span><strong>{extraRows.length}</strong></div></div>
+            </div>
+            <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+              <div className="input-wrap" style={{ flex: 1, minWidth: 220 }}>
+                <input placeholder="ابحث بالكود أو الاسم أو الإدارة أو السكن…" value={cycleSearch} onChange={(e) => setCycleSearch(e.target.value)} />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <input type="checkbox" checked={cycleOnlyMissing} onChange={(e) => setCycleOnlyMissing(e.target.checked)} />
+                <span>إظهار «لم يصعد» فقط</span>
+              </label>
+              <small className="muted">عدد الموظفين المسجّلين في الكشف: {allEmployees.length}</small>
+            </div>
+            <div className="table-card">
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>حالة الدورة</th><th>النتيجة</th></tr>
+                  </thead>
+                  <tbody>
+                    {plannedRows.map((e: any, i: number) => (
+                      <tr key={`${e.employee_code}-${i}`}>
+                        <td>{i + 1}</td>
+                        <td>{e.employee_code || "—"}</td>
+                        <td><strong>{e.name || "—"}</strong></td>
+                        <td>{e.department_name || "—"}</td>
+                        <td>{e.company_name || "—"}</td>
+                        <td>{e.housing_location || "—"}</td>
+                        <td><CycleBadge info={e.cycle} withPosition /></td>
+                        <td>{e.boarded
+                          ? <span className="status status-completed">صعد</span>
+                          : <span className="status status-cancelled">لم يصعد</span>}</td>
+                      </tr>
+                    ))}
+                    {!plannedRows.length && (
+                      <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                        {allEmployees.length
+                          ? "لا يوجد موظفون بحالة «يوم عمل» مطابقون لهذا التاريخ/الفلتر."
+                          : "لا توجد بيانات موظفين بعد — ارفع كشف الموظفين مع نظام الدوام من تبويب «الموظفون»."}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {extraRows.length > 0 && (
+              <div className="section">
+                <div className="section-title">
+                  <div><h2>صعدوا بدون خطة دوام ({extraRows.length})</h2><span>مسجّلون في تقارير الرحلات لهذا التاريخ لكن دوريتهم لا تقول إنهم في يوم عمل.</span></div>
+                </div>
+                <div className="table-card">
+                  <div className="table-scroll" style={{ maxHeight: 320 }}>
+                    <table>
+                      <thead>
+                        <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>حالة الدورة</th></tr>
+                      </thead>
+                      <tbody>
+                        {extraRows.map((p: any, i: number) => {
+                          const emp = allEmployees.find((e) => e.employee_code === String(p.employee_code)) || null;
+                          return (
+                            <tr key={`${p.employee_code}-${i}`}>
+                              <td>{i + 1}</td>
+                              <td>{p.employee_code || "—"}</td>
+                              <td><strong>{p.name || emp?.name || "—"}</strong></td>
+                              <td>{p.department || emp?.department_name || "—"}</td>
+                              <td>{p.company || emp?.company_name || "—"}</td>
+                              <td><CycleBadge info={employeeCycle(emp, dateValue)} /></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
     </AppShell>
   );
 }
