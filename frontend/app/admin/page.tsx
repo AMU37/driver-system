@@ -98,6 +98,7 @@ export type ActualRow = {
   name: string;
   housing: string;
   department: string;
+  schedule: string;
   driver: string;
   bus: string;
   route: string;
@@ -135,6 +136,7 @@ function actualRowsForDate(reports: any[], dateValue: string, employees: any[]):
         name: p.name || emp?.name || "—",
         housing: p.housing_location || emp?.housing_location || "—",
         department: p.department || emp?.department_name || "—",
+        schedule: emp?.schedule_desc || emp?.work_schedule || "—",
         driver,
         bus,
         route,
@@ -1566,8 +1568,8 @@ export default function AdminPage() {
           .filter((r) => !actualStatus || (actualStatus === "match" ? r.status === "match" : r.status !== "match"));
         const statusNoteOf = (r: ActualRow) => (r.status === "nonemp" ? "غير موظف" : r.status === "unknown" ? "غير مسجّل في الكشف" : "مخالف لخطة الدوام");
         const statusLabelOf = (r: ActualRow) => (r.status === "match" ? "حسب الخطة" : `مخالف — ${statusNoteOf(r)}`);
-        const exportHeaders = ["#", "الكود", "الاسم", "الخط (السكن)", "الإدارة", "السائق", "الباص", "المسار", "الرحلة", "النوع", "وقت الصعود", "المطابقة"];
-        const exportRows = rows.map((r, i) => [i + 1, r.code || "", r.name || "", r.housing || "", r.department || "", r.driver, r.bus, r.route, r.tripNumber, r.tripType, r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "", statusLabelOf(r)]);
+        const exportHeaders = ["#", "الكود", "الاسم", "الخط (السكن)", "الإدارة", "نوع الدوام", "السائق", "الباص", "المسار", "الرحلة", "النوع", "وقت الصعود", "المطابقة"];
+        const exportRows = rows.map((r, i) => [i + 1, r.code || "", r.name || "", r.housing || "", r.department || "", r.schedule || "", r.driver, r.bus, r.route, r.tripNumber, r.tripType, r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "", statusLabelOf(r)]);
         const actualTitle = "الموظفون الفعليون (الصاعدون)";
         const actualSubtitle = `التاريخ: ${dateValue} · عدد الصاعدين: ${rows.length}`;
         const count = (s: ActualRow["status"]) => all.filter((r) => r.status === s).length;
@@ -1648,7 +1650,7 @@ export default function AdminPage() {
                   <thead>
                     <tr>
                       <th>#</th><th>الكود</th><th>الاسم</th><th>الخط (السكن)</th><th>الإدارة</th>
-                      <th>السائق</th><th>الباص</th><th>المسار</th><th>الرحلة</th><th>النوع</th><th>وقت الصعود</th><th>المطابقة</th>
+                      <th>نوع الدوام</th><th>السائق</th><th>الباص</th><th>المسار</th><th>الرحلة</th><th>النوع</th><th>وقت الصعود</th><th>المطابقة</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1659,6 +1661,7 @@ export default function AdminPage() {
                         <td><strong>{r.name || "—"}</strong></td>
                         <td>{r.housing || "—"}</td>
                         <td>{r.department || "—"}</td>
+                        <td>{r.schedule || "—"}</td>
                         <td>{r.driver}</td>
                         <td>{r.bus}</td>
                         <td>{r.route}</td>
@@ -1669,7 +1672,7 @@ export default function AdminPage() {
                       </tr>
                     ))}
                     {!rows.length && (
-                      <tr><td colSpan={12} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                      <tr><td colSpan={13} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
                         لا يوجد صاعدون فعليون لهذا التاريخ/الفلتر — ستظهر الحالات هنا فور وصول تقارير رحلات السائقين.
                       </td></tr>
                     )}
