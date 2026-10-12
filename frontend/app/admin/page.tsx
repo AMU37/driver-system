@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import AppShell from "@/components/AppShell";
 import CrudTable, { type CrudColumn, type CrudField } from "@/components/CrudTable";
 import StatusBadge from "@/components/StatusBadge";
+import { MultiSelect } from "@/components/MultiSelect";
 import {
   addBus, addCompany, addDepartment, addDriver, addAdminUser, addEmployeeMaster, addHousing, addJob, addRoute,
   createAdminPlan, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
@@ -196,10 +197,11 @@ export default function AdminPage() {
   const [actualHousing, setActualHousing] = useState("");
   const [actualStatus, setActualStatus] = useState("");
   const [planDate, setPlanDate] = useState<string>(todayIso());
-  const [planHousing, setPlanHousing] = useState("");
-  const [planRouteFilter, setPlanRouteFilter] = useState("");
-  const [planSchedule, setPlanSchedule] = useState("");
-  const [planStatus, setPlanStatus] = useState<CycleStatus | "">("arriving");
+  const [planHousing, setPlanHousing] = useState<string[]>([]);
+  const [planRouteFilter, setPlanRouteFilter] = useState<string[]>([]);
+  const [planSchedule, setPlanSchedule] = useState<string[]>([]);
+  const [planServiceType, setPlanServiceType] = useState<string[]>([]);
+  const [planStatus, setPlanStatus] = useState<CycleStatus[]>(["arriving"]);
   const [planSearch, setPlanSearch] = useState("");
   const [planSelected, setPlanSelected] = useState<Record<string, boolean>>({});
   const [pForm, setPForm] = useState<any>({ driver_code: "", bus_number: "", route_name: "", origin: "", destination: "", trip_type: "قادم", scheduled_start_at: "" });
@@ -901,12 +903,15 @@ export default function AdminPage() {
       {tab === "planner" && (() => {
         const dateValue = planDate || todayIso();
         const q = planSearch.trim().toLowerCase();
-        const dirType = pForm.trip_type || "قادم";
+        const directionFilters = planStatus.filter((s) => s === "arriving" || s === "departing");
+        const filterDir = directionFilters.length === 1 ? (directionFilters[0] === "departing" ? "مغادر" : "قادم") : "";
+        const dirType = filterDir || pForm.trip_type || "قادم";
         const wantStatus: "arriving" | "departing" = dirType === "مغادر" ? "departing" : "arriving";
 
         const housingCounts = new Map<string, number>();
         const scheduleCounts = new Map<string, number>();
         const routeCounts = new Map<string, number>();
+        const serviceCounts = new Map<string, number>();
         for (const e of allEmployees) {
           const h = String(e.housing_location ?? "").trim();
           if (h) housingCounts.set(h, (housingCounts.get(h) || 0) + 1);
@@ -914,20 +919,31 @@ export default function AdminPage() {
           if (s) scheduleCounts.set(s, (scheduleCounts.get(s) || 0) + 1);
           const rn = String(e.route_name ?? "").trim();
           if (rn) routeCounts.set(rn, (routeCounts.get(rn) || 0) + 1);
+          const st = String(e.service_type ?? "").trim();
+          if (st) serviceCounts.set(st, (serviceCounts.get(st) || 0) + 1);
         }
-        const housingOptions = Array.from(housingCounts.entries()).sort((a, b) => b[1] - a[1]);
-        const scheduleOptions = Array.from(scheduleCounts.entries()).sort((a, b) => b[1] - a[1]);
-        const routeOptions = Array.from(routeCounts.entries()).sort((a, b) => b[1] - a[1]);
+        const toOptions = (m: Map<string, number>) => Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, label: `${value} (${count})` }));
+        const housingOptions = toOptions(housingCounts);
+        const scheduleOptions = toOptions(scheduleCounts);
+        const routeOptions = toOptions(routeCounts);
+        const serviceTypeOptions = toOptions(serviceCounts);
 
         const rows = allEmployees
           .map((e) => ({ e, cycle: employeeCycle(e, dateValue) }))
           .filter((x) => x.cycle)
           .map((x) => ({ e: x.e, cycle: x.cycle as CycleInfo }))
-          .filter((x) => !planHousing || String(x.e.housing_location ?? "").trim() === planHousing)
-          .filter((x) => !planRouteFilter || String(x.e.route_name ?? "").trim() === planRouteFilter)
-          .filter((x) => !planSchedule || String(x.e.work_schedule ?? "").trim() === planSchedule)
-          .filter((x) => !planStatus || x.cycle.status === planStatus || ((planStatus === "arriving" || planStatus === "departing") && x.cycle.status === "daily"))
-          .filter((x) => !q || [x.e.employee_code, x.e.name, x.e.department_name, x.e.company_name, x.e.housing_location, x.e.route_name, x.e.work_schedule, x.e.schedule_desc].some((v) => String(v ?? "").toLowerCase().includes(q)));
+          .filter((x) => planHousing.length === 0 || planHousing.includes(String(x.e.housing_location ?? "").trim()))
+          .filter((x) => planRouteFilter.length === 0 || planRouteFilter.includes(String(x.e.route_name ?? "").trim()))
+          .filter((x) => planSchedule.length === 0 || planSchedule.includes(String(x.e.work_schedule ?? "").trim()))
+          .filter((x) => planServiceType.length === 0 || planServiceType.includes(String(x.e.service_type ?? "").trim()))
+          .filter((x) => planStatus.length === 0 || planStatus.includes(x.cycle.status) || ((planStatus.includes("arriving") || planStatus.includes("departing")) && x.cycle.status === "daily"))
+          .filter((x) => !q || [x.e.employee_code, x.e.name, x.e.department_name, x.e.company_name, x.e.housing_location, x.e.route_name, x.e.work_schedule, x.e.schedule_desc].some((v) => String(v ?? "").toLowerCase().includes(q)))
+          .sort((a, b) => {
+            const ra = String(a.e.route_name ?? "").trim();
+            const rb = String(b.e.route_name ?? "").trim();
+            if (ra !== rb) return (ra || "\uffff").localeCompare(rb || "\uffff", "ar");
+            return String(a.e.name ?? "").localeCompare(String(b.e.name ?? ""), "ar");
+          });
 
         const selectedCodes = Object.keys(planSelected).filter((c) => planSelected[c]);
         const allSelected = rows.length > 0 && rows.every((x) => planSelected[String(x.e.employee_code)]);
@@ -937,7 +953,9 @@ export default function AdminPage() {
         const statusSummary = Array.from(statusCounts.entries()).map(([s, n]) => `${CYCLE_STATUS_OPTIONS.find(o => o.value === s)?.label ?? s} ${n}`).join(" · ") || "—";
 
         const plannerTitle = "تخطيط مواصلات الموظفين";
-        const plannerSubtitle = `التاريخ: ${dateValue} · الهدف: ${dirType} · المعروضون: ${rows.length} · المحدَّدون: ${selectedCodes.length}`;
+        const housingLabel = planHousing.length ? planHousing.join("، ") : "كل المواقع";
+        const destination = dirType === "مغادر" ? `من الشركة إلى ${housingLabel}` : `من ${housingLabel} إلى الشركة`;
+        const plannerSubtitle = `التاريخ: ${dateValue} · الهدف: ${dirType} · الوجه: ${destination} · المعروضون: ${rows.length} · المحدَّدون: ${selectedCodes.length}`;
         const plannerHeaders = ["#", "الكود", "الاسم", "الإدارة", "الشركة", "السكن", "خط السير", "نظام الدوام", "حالة الدورة", "المغادرة", "المطابقة"];
         const plannerExportRows = rows.map((x, i) => [i + 1, x.e.employee_code || "", x.e.name || "", x.e.department_name || "", x.e.company_name || "", x.e.housing_location || "", x.e.route_name || "", x.e.schedule_desc || x.e.work_schedule || "", x.cycle.label, x.e.departure_time || "", matchesTripDirection(x.cycle.status, wantStatus) ? "مطابق" : "مخالف"]);
 
@@ -963,29 +981,21 @@ export default function AdminPage() {
             </div>
 
             <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-              <label className="field" style={{ minWidth: 150 }}><span>موقع السكن</span>
-                <select value={planHousing} onChange={(e) => setPlanHousing(e.target.value)}>
-                  <option value="">كل مواقع السكن</option>
-                  {housingOptions.map(([name, count]) => <option key={name} value={name}>{name} ({count})</option>)}
-                </select>
-              </label>
-              <label className="field" style={{ minWidth: 230 }}><span>نظام الدوام (جدول العمل)</span>
-                <select value={planSchedule} onChange={(e) => setPlanSchedule(e.target.value)}>
-                  <option value="">كل الأنظمة</option>
-                  {scheduleOptions.map(([name, count]) => <option key={name} value={name}>{name} ({count})</option>)}
-                </select>
-              </label>
-              <label className="field" style={{ minWidth: 170 }}><span>خط السير</span>
-                <select value={planRouteFilter} onChange={(e) => setPlanRouteFilter(e.target.value)}>
-                  <option value="">كل الخطوط</option>
-                  {routeOptions.map(([name, count]) => <option key={name} value={name}>{name} ({count})</option>)}
-                </select>
-              </label>
-              <label className="field" style={{ minWidth: 150 }}><span>حالة الدورة</span>
-                <select value={planStatus} onChange={(e) => setPlanStatus(e.target.value as CycleStatus | "")}>
-                  {CYCLE_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </label>
+              <div className="field" style={{ minWidth: 170 }}><span>موقع السكن</span>
+                <MultiSelect options={housingOptions} value={planHousing} onChange={setPlanHousing} placeholder="كل مواقع السكن" />
+              </div>
+              <div className="field" style={{ minWidth: 230 }}><span>نظام الدوام (جدول العمل)</span>
+                <MultiSelect options={scheduleOptions} value={planSchedule} onChange={setPlanSchedule} placeholder="كل الأنظمة" />
+              </div>
+              <div className="field" style={{ minWidth: 170 }}><span>خط السير</span>
+                <MultiSelect options={routeOptions} value={planRouteFilter} onChange={setPlanRouteFilter} placeholder="كل الخطوط" />
+              </div>
+              <div className="field" style={{ minWidth: 150 }}><span>نوع الخدمة</span>
+                <MultiSelect options={serviceTypeOptions} value={planServiceType} onChange={setPlanServiceType} placeholder="كل الأنواع" />
+              </div>
+              <div className="field" style={{ minWidth: 150 }}><span>حالة الدورة</span>
+                <MultiSelect options={CYCLE_STATUS_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: o.label }))} value={planStatus} onChange={(v) => setPlanStatus(v as CycleStatus[])} placeholder="كل الحالات" />
+              </div>
               <div className="input-wrap" style={{ flex: 1, minWidth: 200 }}>
                 <input placeholder="ابحث بالكود أو الاسم أو الإدارة…" value={planSearch} onChange={(e) => setPlanSearch(e.target.value)} />
               </div>

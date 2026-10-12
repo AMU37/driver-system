@@ -13,9 +13,29 @@ function fmt(iso?: string | null): string {
   }
 }
 
-function rs(cells: Array<{ v: string; t?: "String" | "Number" }>): string {
-  return "<Row>" + cells.map((c) => `<Cell><Data ss:Type="${c.t || "String"}">${esc(c.v)}</Data></Cell>`).join("") + "</Row>";
+function rs(cells: Array<{ v: string; t?: "String" | "Number"; s?: string }>): string {
+  return "<Row>" + cells.map((c) => `<Cell${c.s ? ` ss:StyleID="${c.s}"` : ""}><Data ss:Type="${c.t || "String"}">${esc(c.v)}</Data></Cell>`).join("") + "</Row>";
 }
+
+type Tone = "good" | "bad" | "warn" | "info";
+
+/** تصنيف دلالي لقيمة الخلية لتلوينها في التقارير. */
+export function toneOf(value: unknown): Tone | null {
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+  if (/مخالف|غير موظف|غير مسجّل|غير مسجل|غير مسجل|لم يصعد|فشل|مرفوض|معطّل|معطل|بدون خطة|متأخر/.test(s)) return "bad";
+  if (/للمراجعة|بانتظار|معلّق|معلق|ترتيب مواصلات|إعادة/.test(s)) return "warn";
+  if (/مطابق|حسب الخطة|مؤكد|نشط|^صعد$|مكتمل|نجح|مُرسل|في النظام/.test(s)) return "good";
+  return null;
+}
+
+/** ألوان التقارير المطبوعة (PDF). */
+export const REPORT_COLORS: Record<Tone, { bg: string; fg: string }> = {
+  good: { bg: "#e8f6ef", fg: "#0b7c54" },
+  bad: { bg: "#fff0f2", fg: "#c02b41" },
+  warn: { bg: "#fff7e4", fg: "#a26900" },
+  info: { bg: "#eaf2ff", fg: "#1769e0" },
+};
 
 function xlsHeader(): string {
   return (
@@ -25,13 +45,26 @@ function xlsHeader(): string {
   );
 }
 
+/** أنماط الألوان لملفات Excel (SpreadsheetML). */
+function xlsStyles(): string {
+  return (
+    "<Styles>" +
+    '<Style ss:ID="hdr"><Font ss:Bold="1" ss:Color="#FFFFFF" ss:Size="12"/><Interior ss:Color="#1769E0" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/></Style>' +
+    '<Style ss:ID="good"><Font ss:Bold="1" ss:Color="#0B7C54"/><Interior ss:Color="#E8F6EF" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:WrapText="1"/></Style>' +
+    '<Style ss:ID="bad"><Font ss:Bold="1" ss:Color="#C02B41"/><Interior ss:Color="#FFF0F2" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:WrapText="1"/></Style>' +
+    '<Style ss:ID="warn"><Font ss:Bold="1" ss:Color="#A26900"/><Interior ss:Color="#FFF7E4" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:WrapText="1"/></Style>' +
+    '<Style ss:ID="info"><Font ss:Bold="1" ss:Color="#1769E0"/><Interior ss:Color="#EAF2FF" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:WrapText="1"/></Style>' +
+    "</Styles>"
+  );
+}
+
 export function routeLabelOf(trip: LocalTrip): string {
   return trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route_name || "—");
 }
 
 export function tripToXlsText(trip: LocalTrip): string {
-  const lines = [xlsHeader(), `<Worksheet ss:Name="رحلة ${esc(trip.trip_number)}">`, "<Table>"];
-  lines.push(rs([{ v: "تقرير رحلة وسائل نقل الموظفين" }]));
+  const lines = [xlsHeader(), xlsStyles(), `<Worksheet ss:Name="رحلة ${esc(trip.trip_number)}">`, "<Table>"];
+  lines.push(rs([{ v: "تقرير رحلة وسائل نقل الموظفين", s: "hdr" }]));
   lines.push(rs([{ v: "رقم الرحلة" }, { v: trip.trip_number }]));
   lines.push(rs([{ v: "السائق" }, { v: trip.driver_username }]));
   lines.push(rs([{ v: "الباص" }, { v: trip.bus_number || trip.planned_bus_number || "—" }]));
@@ -41,8 +74,9 @@ export function tripToXlsText(trip: LocalTrip): string {
   lines.push(rs([{ v: "وقت الإكمال" }, { v: fmt(trip.completed_at) }]));
   lines.push(rs([{ v: "عدد الصاعدين" }, { v: String(trip.passengers.length) }]));
   lines.push(rs([{ v: "" }]));
-  lines.push(rs([{ v: "#" }, { v: "الكود" }, { v: "الاسم" }, { v: "الإدارة/الجهة" }, { v: "الشركة" }, { v: "الغرض" }, { v: "المصدر" }, { v: "الحالة" }]));
+  lines.push(rs([{ v: "#", s: "hdr" }, { v: "الكود", s: "hdr" }, { v: "الاسم", s: "hdr" }, { v: "الإدارة/الجهة", s: "hdr" }, { v: "الشركة", s: "hdr" }, { v: "الغرض", s: "hdr" }, { v: "المصدر", s: "hdr" }, { v: "الحالة", s: "hdr" }]));
   trip.passengers.forEach((p, i) => {
+    const status = p.needs_review ? "للمراجعة" : "مؤكد";
     lines.push(rs([
       { v: String(i + 1), t: "Number" },
       { v: p.employee_code },
@@ -51,7 +85,7 @@ export function tripToXlsText(trip: LocalTrip): string {
       { v: p.company || "" },
       { v: p.visit_purpose || "" },
       { v: p.source || "" },
-      { v: p.needs_review ? "للمراجعة" : "مؤكد" },
+      { v: status, s: toneOf(status) ?? undefined },
     ]));
   });
   lines.push("</Table>", "</Worksheet>", "</Workbook>");
@@ -67,11 +101,12 @@ export function reportStatusLabel(s?: string): string {
 }
 
 export function reportsToXlsText(reports: any[]): string {
-  const lines = [xlsHeader(), '<Worksheet ss:Name="رحلات السائقين">', "<Table>"];
-  lines.push(rs([{ v: "#" }, { v: "الرحلة" }, { v: "السائق" }, { v: "الباص" }, { v: "الخط" }, { v: "الصاعدون" }, { v: "وصول التقرير" }, { v: "الحالة" }]));
+  const lines = [xlsHeader(), xlsStyles(), '<Worksheet ss:Name="رحلات السائقين">', "<Table>"];
+  lines.push(rs([{ v: "#", s: "hdr" }, { v: "الرحلة", s: "hdr" }, { v: "السائق", s: "hdr" }, { v: "الباص", s: "hdr" }, { v: "الخط", s: "hdr" }, { v: "الصاعدون", s: "hdr" }, { v: "وصول التقرير", s: "hdr" }, { v: "الحالة", s: "hdr" }]));
   reports.forEach((r, i) => {
     const trip = (r.raw && r.raw.trip) || {};
     const route = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || "—");
+    const status = reportStatusLabel(r.integration_status);
     lines.push(rs([
       { v: String(i + 1), t: "Number" },
       { v: r.trip_number },
@@ -80,7 +115,7 @@ export function reportsToXlsText(reports: any[]): string {
       { v: route },
       { v: String(r.employee_count ?? 0), t: "Number" },
       { v: fmt(r.received_at) },
-      { v: reportStatusLabel(r.integration_status) },
+      { v: status, s: toneOf(status) ?? undefined },
     ]));
   });
   lines.push("</Table>", "</Worksheet>", "</Workbook>");
@@ -238,25 +273,37 @@ export function openWhatsApp(trip: LocalTrip) {
   window.open(url, isNativePlatform() ? "_system" : "_blank", "noopener");
 }
 
+const TRIP_PRINT_CSS = `
+ body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
+ h1{font-size:20px;margin:0 0 4px;padding-inline-start:10px;border-inline-start:5px solid #1769e0;color:#0f2b52}
+ .meta{color:#55606e;font-size:13px;margin-bottom:6px;line-height:1.8}
+ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+ th,td{border:1px solid #cfd6dd;padding:8px 10px;text-align:right}
+ th{background:#1769e0;color:#fff;border-color:#1769e0}
+ tbody tr.zebra td{background:#f4f7fb}
+ td.t-good{background:#e8f6ef;color:#0b7c54;font-weight:700}
+ td.t-bad{background:#fff0f2;color:#c02b41;font-weight:700}
+ td.t-warn{background:#fff7e4;color:#a26900;font-weight:700}
+ td.t-info{background:#eaf2ff;color:#1769e0;font-weight:700}
+ h2{font-size:15px;margin:20px 0 8px}
+ @media print{body{margin:10mm}}
+`;
+
+function statusCellHtml(status: string): string {
+  const tone = toneOf(status);
+  return `<td${tone ? ` class="t-${tone}"` : ""}>${esc(status)}</td>`;
+}
+
 export function printTripPdf(trip: LocalTrip) {
   const rows = trip.passengers
-    .map(
-      (p, i) =>
-        `<tr><td>${i + 1}</td><td>${esc(p.employee_code)}</td><td>${esc(p.name)}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.visit_purpose || "")}</td><td>${p.needs_review ? "للمراجعة" : "مؤكد"}</td></tr>`
-    )
+    .map((p, i) => {
+      const status = p.needs_review ? "للمراجعة" : "مؤكد";
+      return `<tr class="${i % 2 ? "zebra" : ""}"><td>${i + 1}</td><td>${esc(p.employee_code)}</td><td>${esc(p.name)}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.visit_purpose || "")}</td>${statusCellHtml(status)}</tr>`;
+    })
     .join("");
   const route = routeLabelOf(trip);
   const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>رحلة ${esc(trip.trip_number)}</title>
-<style>
- body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
- h1{font-size:20px;margin:0 0 4px}
- .meta{color:#55606e;font-size:13px;margin-bottom:14px;line-height:1.8}
- table{width:100%;border-collapse:collapse;font-size:13px}
- th,td{border:1px solid #cfd6dd;padding:8px 10px;text-align:right}
- th{background:#eef4ff}
- h2{font-size:15px;margin:20px 0 8px}
- @media print{body{margin:10mm}}
-</style></head><body>
+<style>${TRIP_PRINT_CSS}</style></head><body>
 <h1>تقرير رحلة ${esc(trip.trip_number)}</h1>
 <div class="meta">السائق: ${esc(trip.driver_username)} · الباص: ${esc(trip.bus_number || trip.planned_bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}</div>
 <div class="meta">البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
@@ -322,23 +369,14 @@ export function openReportTripWhatsApp(report: any) {
 export function printTripReport(report: any) {
   const { trip, employees } = reportTripOf(report);
   const rows = employees
-    .map(
-      (p, i) =>
-        `<tr><td>${i + 1}</td><td>${esc(p.employee_code || "")}</td><td>${esc(p.name || "—")}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.job || "")}</td><td>${esc(p.housing_location || "")}</td><td>${esc(reportEmployeeStatus(p))}</td></tr>`
-    )
+    .map((p, i) => {
+      const status = reportEmployeeStatus(p);
+      return `<tr class="${i % 2 ? "zebra" : ""}"><td>${i + 1}</td><td>${esc(p.employee_code || "")}</td><td>${esc(p.name || "—")}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.job || "")}</td><td>${esc(p.housing_location || "")}</td>${statusCellHtml(status)}</tr>`;
+    })
     .join("");
   const route = reportRouteLabel(report);
   const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>رحلة ${esc(report.trip_number)}</title>
-<style>
- body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
- h1{font-size:20px;margin:0 0 4px}
- .meta{color:#55606e;font-size:13px;margin-bottom:14px;line-height:1.8}
- table{width:100%;border-collapse:collapse;font-size:13px}
- th,td{border:1px solid #cfd6dd;padding:8px 10px;text-align:right}
- th{background:#eef4ff}
- h2{font-size:15px;margin:20px 0 8px}
- @media print{body{margin:10mm}}
-</style></head><body>
+<style>${TRIP_PRINT_CSS}</style></head><body>
 <h1>تقرير رحلة ${esc(report.trip_number)}</h1>
 <div class="meta">السائق: ${esc(report.driver_name || report.driver_username || "—")} · الباص: ${esc(trip.bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}${trip.company_code ? " · الشركة: " + esc(trip.company_code) : ""}</div>
 <div class="meta">الانطلاق المخطط: ${esc(fmt(trip.scheduled_start_at))} · البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
@@ -352,10 +390,14 @@ export function printTripReport(report: any) {
 /* ---- تصدير/طباعة/واتساب جداول عامة (الخطة اليومية / الفعليون / المخطط مقابل الفعلي) ---- */
 
 export function tableToXlsText(sheetName: string, headers: string[], rows: Array<Array<string | number>>): string {
-  const lines = [xlsHeader(), `<Worksheet ss:Name="${esc(sheetName)}">`, "<Table>"];
-  lines.push(rs(headers.map((h) => ({ v: h }))));
+  const lines = [xlsHeader(), xlsStyles(), `<Worksheet ss:Name="${esc(sheetName)}">`, "<Table>"];
+  lines.push(rs(headers.map((h) => ({ v: h, s: "hdr" }))));
   for (const r of rows) {
-    lines.push(rs(r.map((c) => (typeof c === "number" ? { v: String(c), t: "Number" as const } : { v: String(c ?? "") }))));
+    lines.push(rs(r.map((c) => {
+      const tone = toneOf(c);
+      if (typeof c === "number") return { v: String(c), t: "Number" as const, s: tone ?? undefined };
+      return { v: String(c ?? ""), s: tone ?? undefined };
+    })));
   }
   lines.push("</Table>", "</Worksheet>", "</Workbook>");
   return lines.join("\r\n");
@@ -375,16 +417,29 @@ export function printTableReport(
   extraHtml = "",
 ): boolean {
   const head = headers.map((h) => `<th>${esc(h)}</th>`).join("");
-  const body = rows.map((r) => "<tr>" + r.map((c) => `<td>${esc(c)}</td>`).join("") + "</tr>").join("");
+  const body = rows
+    .map((r, ri) => {
+      const tds = r.map((c) => {
+        const tone = toneOf(c);
+        return `<td${tone ? ` class="t-${tone}"` : ""}>${esc(c)}</td>`;
+      }).join("");
+      return `<tr class="${ri % 2 ? "zebra" : ""}">${tds}</tr>`;
+    })
+    .join("");
   const meta = [subtitle].filter(Boolean).map((l) => `<div class="meta">${esc(l)}</div>`).join("");
   const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
  body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
- h1{font-size:20px;margin:0 0 6px}
+ h1{font-size:20px;margin:0 0 6px;padding-inline-start:10px;border-inline-start:5px solid #1769e0;color:#0f2b52}
  .meta{color:#55606e;font-size:13px;margin-bottom:6px}
  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
  th,td{border:1px solid #cfd6dd;padding:6px 8px;text-align:right}
- th{background:#eef4ff}
+ th{background:#1769e0;color:#fff;font-weight:700;border-color:#1769e0}
+ tbody tr.zebra td{background:#f4f7fb}
+ td.t-good{background:#e8f6ef;color:#0b7c54;font-weight:700}
+ td.t-bad{background:#fff0f2;color:#c02b41;font-weight:700}
+ td.t-warn{background:#fff7e4;color:#a26900;font-weight:700}
+ td.t-info{background:#eaf2ff;color:#1769e0;font-weight:700}
  thead{display:table-header-group}
  tr{page-break-inside:avoid}
  @media print{body{margin:10mm}}
