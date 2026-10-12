@@ -102,6 +102,8 @@ class Employee(Base):
     cycle_day_today: Mapped[int | None] = mapped_column(Integer, nullable=True)
     base_status_today: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cycle_day_tomorrow: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # خط السير من كشف «بأسماء ومواقع السكن وخطوط سير الموظفين»
+    route_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

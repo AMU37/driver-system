@@ -34,10 +34,27 @@ def main():
             "department_name": r["department_name"],
             "company_name": r["company_name"],
             "housing_location": r["housing_location"],
+            "work_schedule": r["work_schedule"],
+            "schedule_desc": r["schedule_desc"],
+            "work_days": r["work_days"],
+            "rest_days": r["rest_days"],
+            "first_work_day": r["first_work_day"],
+            "rotation_status": r["rotation_status"],
+            "departure_time": r["departure_time"],
+            "gender": r["gender"],
+            "service_type": r["service_type"],
+            "transport_type": r["transport_type"],
+            "cycle_day_today": r["cycle_day_today"],
+            "base_status_today": r["base_status_today"],
+            "cycle_day_tomorrow": r["cycle_day_tomorrow"],
+            "route_name": r["route_name"],
             "is_active": bool(r["is_active"]),
         }
         for r in db.execute(
-            """SELECT id, employee_code, name, job_title, department_name, company_name, housing_location, is_active
+            """SELECT id, employee_code, name, job_title, department_name, company_name, housing_location,
+                      work_schedule, schedule_desc, work_days, rest_days, first_work_day, rotation_status,
+                      departure_time, gender, service_type, transport_type, cycle_day_today,
+                      base_status_today, cycle_day_tomorrow, route_name, is_active
                FROM employees ORDER BY employee_code"""
         )
     ]

@@ -65,6 +65,7 @@ class EmployeeLookup(BaseModel):
     cycle_day_today: int | None = None
     base_status_today: str | None = None
     cycle_day_tomorrow: int | None = None
+    route_name: str | None = None
     is_active: bool
 
 
@@ -228,6 +229,7 @@ class EmployeeSyncItem(BaseModel):
     cycle_day_today: int | None = None
     base_status_today: str | None = None
     cycle_day_tomorrow: int | None = None
+    route_name: str | None = None
     is_active: bool = True
 
 
@@ -255,6 +257,7 @@ class EmployeeCreate(BaseModel):
     cycle_day_today: int | None = None
     base_status_today: str | None = Field(default=None, max_length=100)
     cycle_day_tomorrow: int | None = None
+    route_name: str | None = Field(default=None, max_length=200)
     is_active: bool = True
 
 
@@ -278,6 +281,7 @@ class EmployeeUpdate(BaseModel):
     cycle_day_today: int | None = None
     base_status_today: str | None = Field(default=None, max_length=100)
     cycle_day_tomorrow: int | None = None
+    route_name: str | None = Field(default=None, max_length=200)
     is_active: bool | None = None
 
 

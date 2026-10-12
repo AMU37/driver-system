@@ -48,7 +48,7 @@ def sync_employees(payload: EmployeeSyncPayload, _: None = Depends(require_inbou
         "job_title", "department_name", "company_name", "housing_location",
         "work_schedule", "schedule_desc", "work_days", "rest_days", "first_work_day",
         "rotation_status", "departure_time", "gender", "service_type", "transport_type",
-        "cycle_day_today", "base_status_today", "cycle_day_tomorrow", "is_active",
+        "cycle_day_today", "base_status_today", "cycle_day_tomorrow", "route_name", "is_active",
     )
     for item in payload.employees:
         employee = db.scalar(select(Employee).where(Employee.employee_code == item.employee_code))

@@ -10,7 +10,7 @@
 
 const DAY_MS = 86400000;
 
-export type CycleStatus = "arriving" | "working" | "departing" | "transport_arrange" | "vacation";
+export type CycleStatus = "arriving" | "working" | "departing" | "transport_arrange" | "vacation" | "daily";
 
 export type CycleInfo = {
   status: CycleStatus;
@@ -30,9 +30,26 @@ const META: Record<CycleStatus, { label: string; badge: string }> = {
   departing: { label: "مغادر", badge: "started" },
   transport_arrange: { label: "ترتيب مواصلات", badge: "received" },
   vacation: { label: "إجازة", badge: "planned" },
+  daily: { label: "دوام يومي", badge: "daily" },
 };
 
-export const WORK_CYCLE_STATUSES: CycleStatus[] = ["arriving", "working", "departing"];
+export const WORK_CYCLE_STATUSES: CycleStatus[] = ["arriving", "working", "departing", "daily"];
+
+/**
+ * هل نظام الدوام «يومي» (ذهاب وعودة كل يوم عمل)؟
+ * يُعرَّف بأنه نظام أسبوعي براحة قصيرة (عمل 6/راحة 1 أو عمل 5/راحة 2).
+ */
+export function isDailySchedule(workDays: unknown, restDays: unknown): boolean {
+  const wd = toInt(workDays);
+  const rd = toInt(restDays);
+  if (wd === null || rd === null || wd < 1 || rd < 1) return false;
+  return rd <= 2 && wd + rd <= 7;
+}
+
+/** هل تتوافق حالة الدورة مع اتجاه الرحلة؟ «الدوام اليومي» يُحتسب مع القادمين والمغادرين. */
+export function matchesTripDirection(status: CycleStatus, direction: "arriving" | "departing"): boolean {
+  return status === direction || status === "daily";
+}
 
 function dayIndexFromParts(y: number, m: number, d: number): number {
   return Math.round(Date.UTC(y, m - 1, d) / DAY_MS);
@@ -82,7 +99,9 @@ export function computeCycle(
   const pos = ((diff % cycleLen) + cycleLen) % cycleLen;
 
   let status: CycleStatus;
-  if (pos < wd) {
+  if (isDailySchedule(wd, rd)) {
+    status = pos < wd ? "daily" : (pos - wd === rd - 1 ? "transport_arrange" : "vacation");
+  } else if (pos < wd) {
     if (pos === 0) status = "arriving";
     else if (pos === wd - 1) status = "departing";
     else status = "working";

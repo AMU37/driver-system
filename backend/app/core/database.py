@@ -85,6 +85,7 @@ def _migrate_employee_schedule_columns() -> None:
         "cycle_day_today": "INTEGER",
         "base_status_today": "VARCHAR(100)",
         "cycle_day_tomorrow": "INTEGER",
+        "route_name": "VARCHAR(200)",
     }
     for column, ddl_type in columns.items():
         if column_exists("employees", column):

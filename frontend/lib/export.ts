@@ -348,3 +348,58 @@ export function printTripReport(report: any) {
 </body></html>`;
   return printReport(`رحلة ${report.trip_number}`, html);
 }
+
+/* ---- تصدير/طباعة/واتساب جداول عامة (الخطة اليومية / الفعليون / المخطط مقابل الفعلي) ---- */
+
+export function tableToXlsText(sheetName: string, headers: string[], rows: Array<Array<string | number>>): string {
+  const lines = [xlsHeader(), `<Worksheet ss:Name="${esc(sheetName)}">`, "<Table>"];
+  lines.push(rs(headers.map((h) => ({ v: h }))));
+  for (const r of rows) {
+    lines.push(rs(r.map((c) => (typeof c === "number" ? { v: String(c), t: "Number" as const } : { v: String(c ?? "") }))));
+  }
+  lines.push("</Table>", "</Worksheet>", "</Workbook>");
+  return lines.join("\r\n");
+}
+
+export function tableToText(title: string, subtitle: string, headers: string[], rows: Array<Array<string | number>>): string {
+  const out = [title, subtitle, "", headers.join(" | ")].filter((l, i) => i < 2 || l !== "");
+  for (const r of rows) out.push(r.map((c) => String(c ?? "")).join(" | "));
+  return out.join("\n");
+}
+
+export function printTableReport(
+  title: string,
+  subtitle: string,
+  headers: string[],
+  rows: Array<Array<string | number>>,
+  extraHtml = "",
+): boolean {
+  const head = headers.map((h) => `<th>${esc(h)}</th>`).join("");
+  const body = rows.map((r) => "<tr>" + r.map((c) => `<td>${esc(c)}</td>`).join("") + "</tr>").join("");
+  const meta = [subtitle].filter(Boolean).map((l) => `<div class="meta">${esc(l)}</div>`).join("");
+  const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+ body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
+ h1{font-size:20px;margin:0 0 6px}
+ .meta{color:#55606e;font-size:13px;margin-bottom:6px}
+ table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+ th,td{border:1px solid #cfd6dd;padding:6px 8px;text-align:right}
+ th{background:#eef4ff}
+ thead{display:table-header-group}
+ tr{page-break-inside:avoid}
+ @media print{body{margin:10mm}}
+</style></head><body>
+<h1>${esc(title)}</h1>${meta}
+${extraHtml}
+<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+</body></html>`;
+  return printReport(title, html);
+}
+
+export function openWhatsAppText(text: string) {
+  window.open("https://wa.me/?text=" + encodeURIComponent(text), isNativePlatform() ? "_system" : "_blank", "noopener");
+}
+
+export function downloadTable(sheetName: string, filename: string, headers: string[], rows: Array<Array<string | number>>) {
+  downloadContent(filename, tableToXlsText(sheetName, headers, rows), "application/vnd.ms-excel");
+}

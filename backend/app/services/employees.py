@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import date, datetime, time
 
 from openpyxl import load_workbook
 from sqlalchemy import select
@@ -66,13 +67,18 @@ _ALIASES = {
     "يومالدورةغداً": "cycle_day_tomorrow",
     "دورةغدا": "cycle_day_tomorrow",
     "دورةغداً": "cycle_day_tomorrow",
+    # خط السير من كشف «بأسماء ومواقع السكن وخطوط سير الموظفين»
+    "خطالسير": "route_name",
+    "خطسير": "route_name",
+    "routename": "route_name",
+    "route": "route_name",
 }
 
 _FIELDS = [
     "employee_code", "name", "job_title", "department_name", "company_name", "housing_location",
     "work_schedule", "schedule_desc", "work_days", "rest_days", "first_work_day",
     "rotation_status", "departure_time", "gender", "service_type", "transport_type",
-    "cycle_day_today", "base_status_today", "cycle_day_tomorrow",
+    "cycle_day_today", "base_status_today", "cycle_day_tomorrow", "route_name",
 ]
 
 MAX_IMPORT_ROWS = 50000
@@ -126,6 +132,16 @@ def _map_columns(headers: list[str]) -> list[tuple[str, str]]:
 def _clean(value):
     if value is None:
         return None
+    # خلايا Excel للتاريخ/الوقت تُحوَّل إلى صيغة نصية قياسية
+    # (YYYY-MM-DD و HH:MM:SS) ليقرأها التطبيق ويحسب الدورة بثبات.
+    if isinstance(value, datetime):
+        if value.hour or value.minute or value.second:
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.strftime("%H:%M:%S")
     if isinstance(value, float) and value.is_integer():
         return _sanitize(str(int(value)))
     text = str(value).strip()
@@ -138,8 +154,20 @@ def parse_employee_rows(data: bytes, filename: str) -> list[dict]:
         workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         sheet = workbook.active
         rows = sheet.iter_rows(values_only=True)
-        header = [str(c) if c is not None else "" for c in next(rows)]
-        mapping = _map_columns(header)
+        header = None
+        mapping: list[tuple[str, str]] = []
+        for raw in rows:
+            candidate = [str(c) if c is not None else "" for c in raw]
+            if not any(cell.strip() for cell in candidate):
+                continue
+            found = _map_columns(candidate)
+            if found:
+                header = candidate
+                mapping = found
+                break
+        if header is None:
+            workbook.close()
+            return []
         parsed = []
         for record in rows:
             if record is None or all(cell is None or str(cell).strip() == "" for cell in record):
@@ -203,6 +231,7 @@ def import_employee_rows(db: Session, rows: list[dict]) -> dict:
         employee.service_type = _clean(row.get("service_type")) or employee.service_type
         employee.transport_type = _clean(row.get("transport_type")) or employee.transport_type
         employee.base_status_today = _clean(row.get("base_status_today")) or employee.base_status_today
+        employee.route_name = _clean(row.get("route_name")) or employee.route_name
         for field in _NUMBER_FIELDS:
             value = _to_int(row.get(field))
             setattr(employee, field, value if value is not None else getattr(employee, field))
