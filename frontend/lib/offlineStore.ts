@@ -809,6 +809,7 @@ export function addNewPassengerToTrip(tripId: string, driverUsername: string, fo
   if (!trip || trip.status !== "boarding") return null;
   const comingFrom = form.coming_from?.trim() || form.company?.trim() || null;
   const summoned = form.summoned_department?.trim() || form.department?.trim() || null;
+  if (!form.name.trim() || !comingFrom || !summoned) return null;
   trip.passengers.push({
     client_uuid: uuid(),
     employee_code: form.employee_code?.trim() || "",
@@ -861,6 +862,7 @@ export function addNonEmployeePassenger(tripId: string, driverUsername: string, 
   if (!trip || trip.status !== "boarding") return null;
   const comingFrom = data.coming_from.trim() || null;
   const summoned = data.summoned_department.trim() || null;
+  if (!data.name.trim() || !comingFrom || !summoned) return null;
   trip.passengers.push({
     client_uuid: uuid(),
     employee_code: "",

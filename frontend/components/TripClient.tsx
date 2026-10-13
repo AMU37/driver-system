@@ -24,6 +24,8 @@ export default function TripClient({ id }: { id?: string | null }) {
   const [departments, setDepartments] = useState<SnapshotDepartment[]>([]);
 
   const resetForm = () => setForm({ employee_code: "", name: "", coming_from: "", summoned_department: "", purpose: "work" });
+  // علامة الحقول الإجبارية
+  const REQ = <b style={{ color: "var(--danger)", marginInlineStart: 3 }}>*</b>;
 
   useEffect(() => {
     const user = currentUser();
@@ -117,15 +119,22 @@ export default function TripClient({ id }: { id?: string | null }) {
   function addNonEmp() {
     const user = currentUser();
     if (!trip || !user) return;
-    if (!form.name.trim()) { setError("أدخل اسم الراكب"); return; }
-    if (!form.coming_from.trim()) { setError("أدخل الجهة القادم منها"); return; }
-    if (!form.summoned_department.trim()) { setError("اختر الجهة التي استدعته"); return; }
+    const missing: string[] = [];
+    if (!form.name.trim()) missing.push("الاسم");
+    if (!form.coming_from.trim()) missing.push("الجهة القادم منها");
+    if (!form.summoned_department.trim()) missing.push("الجهة التي استدعته");
+    if (missing.length) {
+      setMsg("");
+      setError(`هذه الحقول إجبارية: ${missing.join("، ")}`);
+      return;
+    }
     setError("");
     const comingFrom = form.coming_from.trim();
     const summoned = form.summoned_department.trim();
     const t = form.employee_code.trim()
       ? addNewPassengerToTrip(trip.id, user.username, { employee_code: form.employee_code.trim(), name: form.name.trim(), coming_from: comingFrom, summoned_department: summoned, visit_purpose: form.purpose })
       : addNonEmployeePassenger(trip.id, user.username, { name: form.name.trim(), coming_from: comingFrom, summoned_department: summoned, purpose: form.purpose });
+    if (!t) { setError("تعذر حفظ البيانات — أكمل الحقول الإجبارية وتأكد أن الرحلة نشطة"); return; }
     setMsg("تم حفظ بيانات الراكب");
     resetForm();
     setShowNew(false);
@@ -149,9 +158,11 @@ export default function TripClient({ id }: { id?: string | null }) {
     if (!trip || !user || !editing) return;
     setEditError("");
     if (editing.source === "non_employee") {
-      if (!editForm.name.trim()) { setEditError("أدخل اسم الراكب"); return; }
-      if (!editForm.coming_from.trim()) { setEditError("أدخل الجهة القادم منها"); return; }
-      if (!editForm.summoned_department.trim()) { setEditError("اختر الجهة التي استدعته"); return; }
+      const missing: string[] = [];
+      if (!editForm.name.trim()) missing.push("الاسم");
+      if (!editForm.coming_from.trim()) missing.push("الجهة القادم منها");
+      if (!editForm.summoned_department.trim()) missing.push("الجهة التي استدعته");
+      if (missing.length) { setEditError(`هذه الحقول إجبارية: ${missing.join("، ")}`); return; }
       const res = updatePassengerInTrip(trip.id, user.username, editing.client_uuid, {
         name: editForm.name,
         coming_from: editForm.coming_from,
@@ -308,9 +319,9 @@ export default function TripClient({ id }: { id?: string | null }) {
               </div>
               <div className="form-grid">
                 {!form.employee_code && <label className="field"><span>كود الموظف (اختياري)</span><input value={form.employee_code} onChange={e => setForm({ ...form, employee_code: e.target.value })} inputMode="numeric" placeholder="مثال: 80045" /></label>}
-                <label className="field"><span>الاسم</span><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} autoFocus /></label>
-                <label className="field"><span>الجهة القادم منها</span><input value={form.coming_from} onChange={e => setForm({ ...form, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
-                <label className="field"><span>الجهة التي استدعته</span>
+                <label className="field"><span>الاسم{REQ}</span><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} autoFocus /></label>
+                <label className="field"><span>الجهة القادم منها{REQ}</span><input value={form.coming_from} onChange={e => setForm({ ...form, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                <label className="field"><span>الجهة التي استدعته{REQ}</span>
                   {departments.length ? (
                     <select value={form.summoned_department} onChange={e => setForm({ ...form, summoned_department: e.target.value })}>
                       <option value="">— اختر الإدارة —</option>
@@ -333,7 +344,8 @@ export default function TripClient({ id }: { id?: string | null }) {
                   </select>
                 </label>
               </div>
-              <button className="primary-btn" onClick={addNonEmp} disabled={!form.name.trim() || !form.coming_from.trim() || !form.summoned_department.trim()}>حفظ البيانات</button>
+              <div className="hint" style={{ marginBottom: 10 }}>الحقول المعلّمة بـ <b style={{ color: "var(--danger)" }}>*</b> إجبارية: الاسم، الجهة القادم منها، الجهة التي استدعته.</div>
+              <button className="primary-btn" onClick={addNonEmp}>حفظ البيانات</button>
             </div>
           )}
           <button
@@ -422,9 +434,9 @@ export default function TripClient({ id }: { id?: string | null }) {
             <div className="stack-lg">
               {editing.source === "non_employee" ? (
                 <>
-                  <label className="field"><span>الاسم</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} autoFocus /></label>
-                  <label className="field"><span>الجهة القادم منها</span><input value={editForm.coming_from} onChange={e => setEditForm({ ...editForm, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
-                  <label className="field"><span>الجهة التي استدعته</span>
+                  <label className="field"><span>الاسم{REQ}</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} autoFocus /></label>
+                  <label className="field"><span>الجهة القادم منها{REQ}</span><input value={editForm.coming_from} onChange={e => setEditForm({ ...editForm, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                  <label className="field"><span>الجهة التي استدعته{REQ}</span>
                     {departments.length ? (
                       <select value={editForm.summoned_department} onChange={e => setEditForm({ ...editForm, summoned_department: e.target.value })}>
                         <option value="">— اختر الإدارة —</option>
