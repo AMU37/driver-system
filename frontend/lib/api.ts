@@ -1,6 +1,6 @@
-import { normalizeBaseUrl, isLocalHostUrl } from "./offlineStore";
+import { normalizeBaseUrl, isLocalHostUrl, isLocalPageHost } from "./offlineStore";
 
-export type User = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string; must_change_password?: boolean };
+export type User = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string; must_change_password?: boolean; permissions?: Record<string, boolean> | null };
 export type Passenger = { id: number; employee_code: string; name_snapshot: string; job_title_snapshot?: string | null; department_snapshot?: string | null; company_snapshot?: string | null; housing_location_snapshot?: string | null; visit_purpose: string; boarded_at: string; source: string; needs_review: boolean };
 export type Trip = { id: number; trip_number: string; driver_id: string; company_code: string; status: string; started_at?: string | null; completed_at?: string | null; transferred_at?: string | null; employee_count: number; planned_bus_number?: string | null; actual_bus_number?: string | null; route_name?: string | null; origin?: string | null; destination?: string | null; scheduled_start_at?: string | null; release_at?: string | null; passengers?: Passenger[] };
 export type PlannedTripEmployee = { employee_code: string; name?: string | null; housing_location?: string | null; work_schedule?: string | null; schedule_desc?: string | null; departure_time?: string | null; cycle_status?: string | null };
@@ -11,6 +11,8 @@ export function getStoredUser(): User | null { if (typeof window === "undefined"
 
 let signedOut = false;
 export function getBaseUrl(): string {
+  // Serve local testing from the local backend: ignore any saved remote override.
+  if (isLocalPageHost()) return window.location.origin;
   if (typeof window !== "undefined") {
     try {
       const cfg = JSON.parse(localStorage.getItem("ds_config") || "{}");
@@ -91,6 +93,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return handleResponse(res, base, path, options, headers);
 }
 
+function detailMessage(detail: unknown): string {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => {
+      if (d && typeof d === "object" && "msg" in d) return String((d as { msg: unknown }).msg).replace(/^Value error,\s*/, "");
+      return typeof d === "string" ? d : "";
+    }).filter(Boolean);
+    return parts.join(" · ");
+  }
+  if (typeof detail === "object") return JSON.stringify(detail);
+  return String(detail);
+}
+
 async function handleResponse<T>(res: Response, base: string, path: string, options: RequestInit, headers: Headers): Promise<T> {
   if (res.status === 401 && path !== "/api/auth/login") {
     const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
@@ -113,7 +129,7 @@ async function handleResponse<T>(res: Response, base: string, path: string, opti
     }
   }
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || "حدث خطأ في الطلب");
+  if (!res.ok) throw new Error(detailMessage(body.detail) || "حدث خطأ في الطلب");
   return body;
 }
 
@@ -142,6 +158,7 @@ export function addDriver(payload: any) { return request<User>("/api/admin/drive
 export function getAdminUsers() { return request<any[]>("/api/admin/users"); }
 export function addAdminUser(payload: any) { return request<any>("/api/admin/users", { method: "POST", body: JSON.stringify(payload) }); }
 export function updateAdminUser(id: string, payload: any) { return request<any>(`/api/admin/users/${id}`, { method: "PUT", body: JSON.stringify(payload) }); }
+export function deleteAdminUser(id: string) { return request<{ ok: boolean; deleted: boolean; message: string }>(`/api/admin/users/${id}`, { method: "DELETE" }); }
 export function getAdminBuses() { return request<any[]>("/api/admin/buses"); }
 export function getAdminPlanned() { return request<PlannedTrip[]>("/api/admin/planned-trips"); }
 export function createAdminPlan(payload: any) { return request<PlannedTrip>("/api/admin/planned-trips", { method: "POST", body: JSON.stringify(payload) }); }

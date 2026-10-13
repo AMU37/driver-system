@@ -5,7 +5,7 @@ import { BusFront, KeyRound, LockKeyhole, ShieldCheck, UserRound } from "lucide-
 import { getStoredUser, type User } from "@/lib/api";
 import { findDriver, hasLocalPin, isOnline, loadLocalSession, loadSnapshot, setLocalPin, storeLocalSession, tryOnlineLogin, verifyLocalPin, type SnapshotDriver } from "@/lib/offlineStore";
 import { findLocalDriverAccount } from "@/lib/adminOps";
-import { routePath } from "@/lib/nav";
+import { routePath, homeForRole } from "@/lib/nav";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [online, setOnline] = useState(true);
 
-  const home = (user: User | { role: string }) => (user.role === "driver" ? "/dashboard" : "/admin");
+  const home = (user: User | { role: string }) => homeForRole(user.role);
   const go = (url: string) => { window.location.assign(routePath(url)); };
 
   useEffect(() => {

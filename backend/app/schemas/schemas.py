@@ -13,6 +13,7 @@ class UserOut(BaseModel):
     driver_code: str | None = None
     company_code: str
     must_change_password: bool = False
+    permissions: dict[str, bool] | None = None
 
 
 class LoginRequest(BaseModel):
@@ -75,6 +76,8 @@ class NewEmployeeCreate(BaseModel):
     job_title: str | None = Field(default=None, max_length=200)
     department: str | None = Field(default=None, max_length=200)
     company: str | None = Field(default=None, max_length=200)
+    coming_from: str | None = Field(default=None, max_length=200)
+    summoned_department: str | None = Field(default=None, max_length=200)
     visit_purpose: str = Field(default="employee", max_length=50)
     notes: str | None = None
 
@@ -93,6 +96,8 @@ class TripEmployeeOut(BaseModel):
     department_snapshot: str | None = None
     company_snapshot: str | None = None
     housing_location_snapshot: str | None = None
+    coming_from: str | None = None
+    summoned_department: str | None = None
     visit_purpose: str
     boarded_at: datetime
     source: str
@@ -308,6 +313,7 @@ class AdminUserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     role: str = "supervisor"
     company_code: str = "YCSR"
+    permissions: dict[str, bool] | None = None
 
     @field_validator("password")
     @classmethod
@@ -319,8 +325,8 @@ class AdminUserCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def admin_user_role_allowed(cls, value: str) -> str:
-        if value not in ("supervisor", "admin"):
-            raise ValueError("الدور المسموح: مشرف أو أدمن")
+        if value not in ("supervisor", "admin", "viewer"):
+            raise ValueError("الدور المسموح: مشرف أو أدمن أو مستعرض")
         return value
 
 
@@ -328,6 +334,8 @@ class AdminUserUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=2, max_length=200)
     is_active: bool | None = None
     new_password: str | None = Field(default=None, min_length=8, max_length=200)
+    role: str | None = None
+    permissions: dict[str, bool] | None = None
 
     @field_validator("new_password")
     @classmethod
@@ -337,6 +345,20 @@ class AdminUserUpdate(BaseModel):
         ):
             raise ValueError(_PASSWORD_RULE)
         return value
+
+    @field_validator("role")
+    @classmethod
+    def admin_user_update_role_allowed(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("supervisor", "admin", "viewer"):
+            raise ValueError("الدور المسموح: مشرف أو أدمن أو مستعرض")
+        return value
+
+
+class AdminPermissionsUpdate(BaseModel):
+    view: bool | None = None
+    add: bool | None = None
+    edit: bool | None = None
+    delete: bool | None = None
 
 
 class BusCreate(BaseModel):

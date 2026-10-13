@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { KeyRound, LockKeyhole, ShieldCheck } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { changePassword, getStoredUser } from "@/lib/api";
-import { routePath } from "@/lib/nav";
+import { routePath, homeForRole } from "@/lib/nav";
 
 export default function ChangePasswordPage() {
   const [current, setCurrent] = useState("");
@@ -39,7 +39,7 @@ export default function ChangePasswordPage() {
       const user = await changePassword(current, next);
       localStorage.setItem("user", JSON.stringify(user));
       setSuccess("تم تغيير كلمة المرور بنجاح");
-      setTimeout(() => window.location.assign(routePath(user.role === "driver" ? "/dashboard" : "/admin")), 900);
+      setTimeout(() => window.location.assign(routePath(homeForRole(user.role))), 900);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر تغيير كلمة المرور");
     } finally {

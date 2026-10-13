@@ -6,7 +6,7 @@ export type CrudOption = { value: string | number | boolean; label: string };
 export type CrudField = {
   key: string;
   label: string;
-  type?: "text" | "number" | "password" | "select";
+  type?: "text" | "number" | "password" | "select" | "checkboxes";
   options?: CrudOption[];
   required?: boolean;
   full?: boolean;
@@ -160,7 +160,26 @@ export default function CrudTable({ title, subtitle, items, columns, fields, onS
                 {fields.filter(f => (editing.id ? !f.createOnly : !f.editOnly)).map(f => (
                   <label className={`field ${f.full ? "grid-full" : ""}`} key={f.key}>
                     <span>{f.label}{f.required ? " *" : ""}</span>
-                    {f.type === "select" ? (
+                    {f.type === "checkboxes" ? (
+                      (() => {
+                        const raw = editing.values[f.key];
+                        const current = raw && typeof raw === "object" ? raw : {};
+                        return (
+                          <div className="check-grid">
+                            {(f.options ?? []).map(o => (
+                              <label className="check-item" key={String(o.value)}>
+                                <input
+                                  type="checkbox"
+                                  checked={!!current[String(o.value)]}
+                                  onChange={e => setEditing({ ...editing, values: { ...editing.values, [f.key]: { ...current, [String(o.value)]: e.target.checked } } })}
+                                />
+                                <span>{o.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        );
+                      })()
+                    ) : f.type === "select" ? (
                       <div className="input-wrap">
                         <select
                           value={String(editing.values[f.key] ?? "")}

@@ -5,17 +5,18 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import require_roles
+from app.api.deps import require_permission_by_method, require_roles
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import effective_permissions, sanitize_permissions
 from app.core.security import hash_password
 from app.models import Bus, Employee, NewEmployeeRequest, PlannedTrip, PlannedTripEmployee, Trip, TripEmployee, TripReport, TripStatus, User, UserRole
-from app.schemas import AdminTripPlanCreate, AdminUserCreate, AdminUserUpdate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
+from app.schemas import AdminPermissionsUpdate, AdminTripPlanCreate, AdminUserCreate, AdminUserUpdate, DriverCreate, NewEmployeeReview, PlannedTripOut, UserOut
 from app.services.employees import import_employee_rows, parse_employee_rows
 from app.services.numbering import next_trip_number, normalize_trip_type
 from app.services.trips import ensure_bus, ensure_route
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_permission_by_method)])
 
 
 def _assigned_out(item: PlannedTrip) -> list[dict]:
@@ -42,7 +43,7 @@ def drivers(user: User = Depends(require_roles(UserRole.supervisor, UserRole.adm
     return db.scalars(select(User).where(User.role == UserRole.driver, User.is_active.is_(True)).order_by(User.full_name)).all()
 
 
-_MANAGED_ROLES = (UserRole.driver, UserRole.supervisor, UserRole.admin)
+_MANAGED_ROLES = (UserRole.driver, UserRole.supervisor, UserRole.admin, UserRole.viewer)
 
 
 def _user_out(u: User) -> dict:
@@ -55,6 +56,7 @@ def _user_out(u: User) -> dict:
         "company_code": u.company_code,
         "is_active": u.is_active,
         "must_change_password": u.must_change_password,
+        "permissions": effective_permissions(u),
     }
 
 
@@ -77,6 +79,8 @@ def create_user(payload: AdminUserCreate, user: User = Depends(require_roles(Use
         role=UserRole(payload.role),
         company_code=payload.company_code,
     )
+    if payload.permissions is not None and UserRole(payload.role) != UserRole.admin:
+        target.permissions = sanitize_permissions(payload.permissions)
     db.add(target)
     db.commit()
     db.refresh(target)
@@ -90,7 +94,7 @@ def update_user(
     user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)),
     db: Session = Depends(get_db),
 ):
-    """تغيير كلمة مرور/اسم/حالة أي حساب (سائق/مشرف/أدمن) مستقلًا."""
+    """تغيير كلمة مرور/اسم/حالة/دور أي حساب مستقلًا (تعديل الدور للمدير فقط)."""
     target = db.get(User, user_id)
     if not target or target.role not in _MANAGED_ROLES:
         raise HTTPException(404, "المستخدم غير موجود")
@@ -100,12 +104,75 @@ def update_user(
         if target.id == user.id and not payload.is_active:
             raise HTTPException(400, "لا يمكنك تعطيل حسابك الحالي")
         target.is_active = payload.is_active
+    if payload.role is not None:
+        new_role = UserRole(payload.role)
+        if new_role != target.role:
+            if user.role != UserRole.admin:
+                raise HTTPException(403, "تعديل الدور متاح للمدير فقط")
+            if target.id == user.id and new_role != UserRole.admin:
+                raise HTTPException(400, "لا يمكنك تغيير دور حسابك الحالي")
+            target.role = new_role
     if payload.new_password:
         target.password_hash = hash_password(payload.new_password)
         target.must_change_password = False
+    if payload.permissions is not None:
+        if user.role != UserRole.admin:
+            raise HTTPException(403, "تعديل الصلاحيات متاح للمدير فقط")
+        if target.role != UserRole.admin:
+            target.permissions = sanitize_permissions(payload.permissions)
     db.commit()
     db.refresh(target)
     return _user_out(target)
+
+
+@router.put("/users/{user_id}/permissions")
+def set_user_permissions(
+    user_id: str,
+    payload: AdminPermissionsUpdate,
+    user: User = Depends(require_roles(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    """تعيين صلاحيات مستخدم (عرض/إضافة/تعديل/حذف) — للمدير فقط. حساب المدير يملك كل الصلاحيات دائمًا."""
+    target = db.get(User, user_id)
+    if not target or target.role not in _MANAGED_ROLES:
+        raise HTTPException(404, "المستخدم غير موجود")
+    if target.role == UserRole.admin:
+        raise HTTPException(400, "حساب المدير يملك كل الصلاحيات دائمًا")
+    target.permissions = sanitize_permissions(payload.model_dump(exclude_none=True))
+    db.commit()
+    db.refresh(target)
+    return _user_out(target)
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: str,
+    user: User = Depends(require_roles(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    """حذف حساب نهائيًا (المدير فقط) — يُعطَّل الحساب بدل الحذف إن ارتبطت به بيانات."""
+    target = db.get(User, user_id)
+    if not target or target.role not in _MANAGED_ROLES:
+        raise HTTPException(404, "المستخدم غير موجود")
+    if target.id == user.id:
+        raise HTTPException(400, "لا يمكنك حذف حسابك الحالي")
+    if target.role == UserRole.admin:
+        admins = db.scalars(select(User).where(User.role == UserRole.admin, User.id != target.id)).all()
+        if not admins:
+            raise HTTPException(400, "لا يمكن حذف آخر حساب مدير في النظام")
+    username = target.username
+    db.delete(target)
+    try:
+        db.commit()
+        return {"ok": True, "deleted": True, "message": f"تم حذف الحساب «{username}» نهائيًا"}
+    except IntegrityError:
+        db.rollback()
+        target = db.get(User, user_id)
+        if not target:
+            raise HTTPException(500, "تعذر حذف الحساب")
+        target.is_active = False
+        db.commit()
+        return {"ok": True, "deleted": False, "message": f"الحساب «{username}» مرتبط ببيانات، تم تعطيله بدل حذفه"} 
 
 
 @router.post("/drivers", response_model=UserOut)
@@ -243,7 +310,7 @@ def create_plan(payload: AdminTripPlanCreate, user: User = Depends(require_roles
 
 
 @router.get("/new-employees")
-def new_employees(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
+def new_employees(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin, UserRole.viewer)), db: Session = Depends(get_db)):
     rows = db.execute(select(NewEmployeeRequest, Trip.trip_number, User.full_name).join(Trip, Trip.id == NewEmployeeRequest.trip_id).join(User, User.id == NewEmployeeRequest.created_by).order_by(NewEmployeeRequest.created_at.desc()).limit(200)).all()
     return [
         {
@@ -251,6 +318,7 @@ def new_employees(user: User = Depends(require_roles(UserRole.supervisor, UserRo
                 "id": req.id, "trip_id": req.trip_id, "created_by": req.created_by,
                 "employee_code": req.employee_code, "name": req.name, "job_title": req.job_title,
                 "department": req.department, "company": req.company, "visit_purpose": req.visit_purpose,
+                "coming_from": getattr(req, "coming_from", None), "summoned_department": getattr(req, "summoned_department", None),
                 "notes": req.notes, "status": req.status, "created_at": req.created_at,
             },
             "trip_number": trip_number,
@@ -261,7 +329,7 @@ def new_employees(user: User = Depends(require_roles(UserRole.supervisor, UserRo
 
 
 @router.get("/trip-reports")
-def trip_reports(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
+def trip_reports(user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin, UserRole.viewer)), db: Session = Depends(get_db)):
     """تقارير الرحلات المكتملة التي سلمتها أجهزة السائقين — تظهر الرحلة وقائمة الصاعدين للمشرف."""
     items = db.scalars(select(TripReport).order_by(TripReport.received_at.desc()).limit(300)).all()
     out = []

@@ -17,6 +17,7 @@ def run_seed(db: Session) -> None:
     users = [
         ("admin", "مدير النظام", "Admin@12345", UserRole.admin, None),
         ("supervisor", "مشرف النقل", "Supervisor@12345", UserRole.supervisor, None),
+        ("viewer", "مستعرض التقارير", "Viewer@12345", UserRole.viewer, None),
         ("driver1", "أحمد محمد - السائق", "Driver@12345", UserRole.driver, "DRV-001"),
     ]
     for username, full_name, password, role, driver_code in users:

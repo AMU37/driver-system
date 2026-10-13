@@ -2,14 +2,14 @@
 import { useEffect, useMemo, useRef } from "react";
 import { getStoredUser } from "@/lib/api";
 import { loadLocalSession, type OfflineUser } from "@/lib/offlineStore";
-import { routePath } from "@/lib/nav";
+import { homeForRole, routePath } from "@/lib/nav";
 
 export function currentUser(): OfflineUser | null {
   if (typeof window === "undefined") return null;
   return getStoredUser() || loadLocalSession();
 }
 
-export function useAuthGuard(roles?: Array<"driver" | "supervisor" | "admin">): OfflineUser | null {
+export function useAuthGuard(roles?: Array<"driver" | "supervisor" | "admin" | "viewer">): OfflineUser | null {
   const user = useMemo<OfflineUser | null>(() => currentUser(), [
     typeof window === "undefined"
       ? ""
@@ -25,7 +25,7 @@ export function useAuthGuard(roles?: Array<"driver" | "supervisor" | "admin">): 
     }
     if (roles && !roles.includes(user.role as any)) {
       redirected.current = true;
-      window.location.assign(routePath(user.role === "driver" ? "/dashboard" : "/admin"));
+      window.location.assign(routePath(homeForRole(user.role)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, roles]);

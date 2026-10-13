@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import require_permission_by_method, require_roles
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models import (
@@ -40,7 +40,7 @@ from app.schemas import (
     UserOut,
 )
 
-router = APIRouter(prefix="/api/admin", tags=["admin-management"])
+router = APIRouter(prefix="/api/admin", tags=["admin-management"], dependencies=[Depends(require_permission_by_method)])
 ADMIN = (UserRole.supervisor, UserRole.admin)
 
 

@@ -1,4 +1,30 @@
-import { isNativePlatform, type LocalTrip } from "@/lib/offlineStore";
+import { isNativePlatform, type LocalPassenger, type LocalTrip } from "@/lib/offlineStore";
+
+const PURPOSE_LABELS: Record<string, string> = {
+  employee: "موظف", visitor: "زائر", work: "عمل", contractor: "مقاول", meeting: "اجتماع",
+  training: "تدريب", maintenance: "صيانة", delivery: "تسليم/شحن", business_mission: "مهمة عمل", other: "أخرى",
+};
+
+/** تسمية عربية موحّدة لغرض الزيارة في كل التقارير. */
+export function purposeLabelOf(v?: string | null): string {
+  return v ? PURPOSE_LABELS[v] || v : "—";
+}
+
+function isNonEmployee(p: { source?: string | null; is_employee?: boolean | null }): boolean {
+  return p.is_employee === false || p.source === "non_employee";
+}
+
+/** خلايا بيانات غير الموظف موحّدة بين تقارير السائق والمشرف. */
+function passengerDataCells(p: LocalPassenger | Record<string, any>) {
+  const nonEmp = isNonEmployee(p);
+  return {
+    department: nonEmp ? "" : (p.department || ""),
+    company: nonEmp ? "" : (p.company || ""),
+    comingFrom: (p.coming_from || (nonEmp ? p.company : "")) || "",
+    summoned: (p.summoned_department || (nonEmp ? p.department : "")) || "",
+    purpose: purposeLabelOf(p.visit_purpose),
+  };
+}
 
 export function esc(v: unknown): string {
   return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -74,16 +100,19 @@ export function tripToXlsText(trip: LocalTrip): string {
   lines.push(rs([{ v: "وقت الإكمال" }, { v: fmt(trip.completed_at) }]));
   lines.push(rs([{ v: "عدد الصاعدين" }, { v: String(trip.passengers.length) }]));
   lines.push(rs([{ v: "" }]));
-  lines.push(rs([{ v: "#", s: "hdr" }, { v: "الكود", s: "hdr" }, { v: "الاسم", s: "hdr" }, { v: "الإدارة/الجهة", s: "hdr" }, { v: "الشركة", s: "hdr" }, { v: "الغرض", s: "hdr" }, { v: "المصدر", s: "hdr" }, { v: "الحالة", s: "hdr" }]));
+  lines.push(rs([{ v: "#", s: "hdr" }, { v: "الكود", s: "hdr" }, { v: "الاسم", s: "hdr" }, { v: "الإدارة", s: "hdr" }, { v: "الشركة", s: "hdr" }, { v: "الجهة القادم منها", s: "hdr" }, { v: "الجهة التي استدعته", s: "hdr" }, { v: "الغرض", s: "hdr" }, { v: "المصدر", s: "hdr" }, { v: "الحالة", s: "hdr" }]));
   trip.passengers.forEach((p, i) => {
     const status = p.needs_review ? "للمراجعة" : "مؤكد";
+    const c = passengerDataCells(p);
     lines.push(rs([
       { v: String(i + 1), t: "Number" },
       { v: p.employee_code },
       { v: p.name },
-      { v: p.department || "" },
-      { v: p.company || "" },
-      { v: p.visit_purpose || "" },
+      { v: c.department },
+      { v: c.company },
+      { v: c.comingFrom },
+      { v: c.summoned },
+      { v: c.purpose },
       { v: p.source || "" },
       { v: status, s: toneOf(status) ?? undefined },
     ]));
@@ -256,8 +285,14 @@ export function tripText(trip: LocalTrip): string {
       const who = p.name || (p.employee_code ? `كود ${p.employee_code}` : "غير موظف");
       const extra = p.employee_code && p.name ? ` (${p.employee_code})` : "";
       let note = "";
-      if (p.source === "non_employee") note = p.company ? ` — ${p.company}${p.visit_purpose ? ` / ${p.visit_purpose}` : ""}` : " — غير موظف";
-      else if (p.needs_review) note = " — للمراجعة";
+      if (p.source === "non_employee") {
+        const c = passengerDataCells(p);
+        const parts = [];
+        if (c.comingFrom) parts.push(`القادم من: ${c.comingFrom}`);
+        if (c.summoned) parts.push(`استدعته: ${c.summoned}`);
+        parts.push(`الغرض: ${c.purpose}`);
+        note = ` — ${parts.join(" · ")}`;
+      } else if (p.needs_review) note = " — للمراجعة";
       lines.push(`${i + 1}) ${who}${extra}${note}`);
     });
   }
@@ -298,7 +333,8 @@ export function printTripPdf(trip: LocalTrip) {
   const rows = trip.passengers
     .map((p, i) => {
       const status = p.needs_review ? "للمراجعة" : "مؤكد";
-      return `<tr class="${i % 2 ? "zebra" : ""}"><td>${i + 1}</td><td>${esc(p.employee_code)}</td><td>${esc(p.name)}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.visit_purpose || "")}</td>${statusCellHtml(status)}</tr>`;
+      const c = passengerDataCells(p);
+      return `<tr class="${i % 2 ? "zebra" : ""}"><td>${i + 1}</td><td>${esc(p.employee_code)}</td><td>${esc(p.name)}</td><td>${esc(c.department)}</td><td>${esc(c.company)}</td><td>${esc(c.comingFrom)}</td><td>${esc(c.summoned)}</td><td>${esc(c.purpose)}</td>${statusCellHtml(status)}</tr>`;
     })
     .join("");
   const route = routeLabelOf(trip);
@@ -308,7 +344,7 @@ export function printTripPdf(trip: LocalTrip) {
 <div class="meta">السائق: ${esc(trip.driver_username)} · الباص: ${esc(trip.bus_number || trip.planned_bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}</div>
 <div class="meta">البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
 <h2>الصاعدون (${trip.passengers.length})</h2>
-<table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة/الجهة</th><th>الشركة</th><th>الغرض</th><th>الحالة</th></tr></thead>
+<table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الجهة القادم منها</th><th>الجهة التي استدعته</th><th>الغرض</th><th>الحالة</th></tr></thead>
 <tbody>${rows}</tbody></table>
 </body></html>`;
   return printReport(`رحلة ${trip.trip_number}`, html);
@@ -351,7 +387,15 @@ export function reportTripText(report: any): string {
     employees.forEach((p, i) => {
       const who = p.name || (p.employee_code ? `كود ${p.employee_code}` : "غير موظف");
       const extra = p.employee_code && p.name ? ` (${p.employee_code})` : "";
-      const note = ` — ${reportEmployeeStatus(p)}`;
+      let note = ` — ${reportEmployeeStatus(p)}`;
+      if (isNonEmployee(p)) {
+        const c = passengerDataCells(p);
+        const parts = [];
+        if (c.comingFrom) parts.push(`القادم من: ${c.comingFrom}`);
+        if (c.summoned) parts.push(`استدعته: ${c.summoned}`);
+        parts.push(`الغرض: ${c.purpose}`);
+        note = ` — غير موظف · ${parts.join(" · ")}`;
+      }
       lines.push(`${i + 1}) ${who}${extra}${note}`);
     });
   }
@@ -371,7 +415,8 @@ export function printTripReport(report: any) {
   const rows = employees
     .map((p, i) => {
       const status = reportEmployeeStatus(p);
-      return `<tr class="${i % 2 ? "zebra" : ""}"><td>${i + 1}</td><td>${esc(p.employee_code || "")}</td><td>${esc(p.name || "—")}</td><td>${esc(p.department || "")}</td><td>${esc(p.company || "")}</td><td>${esc(p.job || "")}</td><td>${esc(p.housing_location || "")}</td>${statusCellHtml(status)}</tr>`;
+      const c = passengerDataCells(p);
+      return `<tr class="${i % 2 ? "zebra" : ""}"><td>${i + 1}</td><td>${esc(p.employee_code || "")}</td><td>${esc(p.name || "—")}</td><td>${esc(c.department)}</td><td>${esc(c.company)}</td><td>${esc(c.comingFrom)}</td><td>${esc(c.summoned)}</td><td>${esc(p.job || "")}</td><td>${esc(p.housing_location || "")}</td><td>${esc(c.purpose)}</td>${statusCellHtml(status)}</tr>`;
     })
     .join("");
   const route = reportRouteLabel(report);
@@ -381,7 +426,7 @@ export function printTripReport(report: any) {
 <div class="meta">السائق: ${esc(report.driver_name || report.driver_username || "—")} · الباص: ${esc(trip.bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}${trip.company_code ? " · الشركة: " + esc(trip.company_code) : ""}</div>
 <div class="meta">الانطلاق المخطط: ${esc(fmt(trip.scheduled_start_at))} · البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
 <h2>الصاعدون (${employees.length})</h2>
-<table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الوظيفة</th><th>السكن</th><th>الحالة</th></tr></thead>
+<table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الجهة القادم منها</th><th>الجهة التي استدعته</th><th>الوظيفة</th><th>السكن</th><th>الغرض</th><th>الحالة</th></tr></thead>
 <tbody>${rows}</tbody></table>
 </body></html>`;
   return printReport(`رحلة ${report.trip_number}`, html);

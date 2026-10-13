@@ -59,6 +59,7 @@ export type Snapshot = {
   employees: SnapshotEmployee[]; buses: SnapshotBus[]; drivers: SnapshotDriver[]; planned: SnapshotPlanned[];
   routes?: { id: number; name: string; origin?: string | null; destination?: string | null; company_code: string; is_active: boolean }[];
   companies?: { id: number; code: string; name: string; is_active: boolean }[];
+  departments?: { id: number; name: string; company_id: number; is_active?: boolean }[];
   config?: { power_automate_url?: string };
 };
 
@@ -70,6 +71,8 @@ export type LocalPassenger = {
   department?: string | null;
   company?: string | null;
   housing_location?: string | null;
+  coming_from?: string | null;
+  summoned_department?: string | null;
   visit_purpose: string;
   boarded_at: string;
   source: string;
@@ -152,7 +155,18 @@ export function isLocalHostUrl(url: string): boolean {
   return /(^|\.)localhost$|127\.0\.0\.1|::1/.test(url.split("://").pop() || "");
 }
 
+/** True when the web app itself is being served from a local development host. */
+export function isLocalPageHost(): boolean {
+  if (typeof window === "undefined") return false;
+  if (isNativePlatform()) return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 export function backendBaseUrl(): string {
+  // On a local development host always talk to the local backend, ignoring any
+  // saved custom/remote server URL so local testing never hits production.
+  if (isLocalPageHost()) return window.location.origin;
   const cfg = getConfig();
   const raw = (cfg.server_url || "").trim();
   if (raw) return normalizeBaseUrl(raw);
@@ -602,6 +616,23 @@ export function getAvailableRoutes(companyCode?: string | null): SnapshotRoute[]
   return scoped.length ? scoped : routes;
 }
 
+export type SnapshotDepartment = { id: number; name: string; company_id: number; is_active?: boolean };
+
+/**
+ * الإدارات النشطة «الجهة التي استدعته» — تُفلتر حسب شركة السائق إن أمكن،
+ * مع الرجوع لكل الإدارات إذا لم يُعثر على الشركة في اللقطة.
+ */
+export function getAvailableDepartments(companyCode?: string | null): SnapshotDepartment[] {
+  const s = getCachedSnapshot();
+  if (!s || !Array.isArray(s.departments)) return [];
+  const active = s.departments.filter((d) => d.is_active !== false);
+  if (!companyCode) return active;
+  const company = (s.companies || []).find((c) => c.code === companyCode);
+  if (!company) return active;
+  const scoped = active.filter((d) => d.company_id === company.id);
+  return scoped.length ? scoped : active;
+}
+
 function companyNameFor(code: string): string | null {
   const s = getCachedSnapshot();
   if (!s || !Array.isArray(s.companies)) return null;
@@ -753,18 +784,22 @@ export function addPassengerToTrip(tripId: string, driverUsername: string, emplo
   return trip;
 }
 
-export function addNewPassengerToTrip(tripId: string, driverUsername: string, form: { employee_code?: string; name: string; job_title?: string; department?: string; company?: string; visit_purpose?: string }): LocalTrip | null {
+export function addNewPassengerToTrip(tripId: string, driverUsername: string, form: { employee_code?: string; name: string; job_title?: string; department?: string; company?: string; coming_from?: string; summoned_department?: string; visit_purpose?: string }): LocalTrip | null {
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
   if (!trip || trip.status !== "boarding") return null;
+  const comingFrom = form.coming_from?.trim() || form.company?.trim() || null;
+  const summoned = form.summoned_department?.trim() || form.department?.trim() || null;
   trip.passengers.push({
     client_uuid: uuid(),
     employee_code: form.employee_code?.trim() || "",
     name: form.name,
     job_title: form.job_title?.trim() || null,
-    department: form.department?.trim() || null,
-    company: form.company?.trim() || null,
+    department: summoned,
+    company: comingFrom,
     housing_location: null,
+    coming_from: comingFrom,
+    summoned_department: summoned,
     visit_purpose: form.visit_purpose || "employee",
     boarded_at: new Date().toISOString(),
     source: "new_employee",
@@ -801,19 +836,23 @@ export function addPassengerByCode(tripId: string, driverUsername: string, code:
   return { trip, matched: false, duplicated: false, notFound: true };
 }
 
-export function addNonEmployeePassenger(tripId: string, driverUsername: string, data: { name: string; entity: string; purpose: string }): LocalTrip | null {
+export function addNonEmployeePassenger(tripId: string, driverUsername: string, data: { name: string; coming_from: string; summoned_department: string; purpose: string }): LocalTrip | null {
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
   if (!trip || trip.status !== "boarding") return null;
+  const comingFrom = data.coming_from.trim() || null;
+  const summoned = data.summoned_department.trim() || null;
   trip.passengers.push({
     client_uuid: uuid(),
     employee_code: "",
     name: data.name.trim(),
     job_title: null,
-    department: null,
-    company: data.entity.trim() || null,
+    department: summoned,
+    company: comingFrom,
     housing_location: null,
-    visit_purpose: data.purpose || "other",
+    coming_from: comingFrom,
+    summoned_department: summoned,
+    visit_purpose: data.purpose || "work",
     boarded_at: new Date().toISOString(),
     source: "non_employee",
     needs_review: true,
@@ -837,7 +876,7 @@ export function updatePassengerInTrip(
   tripId: string,
   driverUsername: string,
   clientUuid: string,
-  patch: { employee_code?: string; name?: string; company?: string; visit_purpose?: string }
+  patch: { employee_code?: string; name?: string; company?: string; coming_from?: string; summoned_department?: string; visit_purpose?: string }
 ): { trip: LocalTrip | null; duplicated: boolean } {
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
@@ -847,8 +886,19 @@ export function updatePassengerInTrip(
 
   if (passenger.source === "non_employee") {
     if (patch.name !== undefined) passenger.name = patch.name.trim();
-    if (patch.company !== undefined) passenger.company = patch.company.trim() || null;
-    if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose || "other";
+    if (patch.coming_from !== undefined) {
+      passenger.coming_from = patch.coming_from.trim() || null;
+      passenger.company = passenger.coming_from;
+    }
+    if (patch.summoned_department !== undefined) {
+      passenger.summoned_department = patch.summoned_department.trim() || null;
+      passenger.department = passenger.summoned_department;
+    }
+    if (patch.company !== undefined && patch.coming_from === undefined) {
+      passenger.coming_from = patch.company.trim() || null;
+      passenger.company = passenger.coming_from;
+    }
+    if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose || "work";
     persistTrips(list);
     return { trip, duplicated: false };
   }
@@ -936,6 +986,8 @@ export function buildTripPayload(trip: LocalTrip): Record<string, unknown> {
         department: p.department,
         company: p.company,
         housing_location: p.housing_location,
+        coming_from: p.coming_from,
+        summoned_department: p.summoned_department,
         visit_purpose: p.visit_purpose,
         boarded_at: p.boarded_at,
         source: p.source,

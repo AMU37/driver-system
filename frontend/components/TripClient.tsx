@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FileSpreadsheet, MessageCircle, Pencil, Printer, Send, Trash2, UserPlus, Users2 } from "lucide-react";
+import { FileSpreadsheet, MessageCircle, Pencil, Printer, Trash2, UserPlus, Users2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import StatusBadge from "@/components/StatusBadge";
-import { addNewPassengerToTrip, addNonEmployeePassenger, addPassengerByCode, completeLocalTrip, getActiveLocalTrip, getConfig, getLocalTrip, isOnline, loadSnapshot, removePassengerFromTrip, syncNow, updatePassengerInTrip, type LocalPassenger, type LocalTrip } from "@/lib/offlineStore";
+import { addNewPassengerToTrip, addNonEmployeePassenger, addPassengerByCode, completeLocalTrip, getActiveLocalTrip, getAvailableDepartments, getConfig, getLocalTrip, isOnline, loadSnapshot, removePassengerFromTrip, syncNow, updatePassengerInTrip, type LocalPassenger, type LocalTrip, type SnapshotDepartment } from "@/lib/offlineStore";
 import { downloadContent, openWhatsApp, printTripPdf, tripToXlsText } from "@/lib/export";
 import { useAuthGuard, currentUser } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -13,14 +13,17 @@ export default function TripClient({ id }: { id?: string | null }) {
   const [trip, setTrip] = useState<LocalTrip | null>(null);
   const [code, setCode] = useState("");
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ employee_code: "", name: "", entity: "", purpose: "visitor" });
+  const [form, setForm] = useState({ employee_code: "", name: "", coming_from: "", summoned_department: "", purpose: "work" });
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [online, setOnline] = useState(true);
   const [editing, setEditing] = useState<LocalPassenger | null>(null);
-  const [editForm, setEditForm] = useState({ employee_code: "", name: "", entity: "", purpose: "employee" });
+  const [editForm, setEditForm] = useState({ employee_code: "", name: "", coming_from: "", summoned_department: "", purpose: "employee" });
   const [editError, setEditError] = useState("");
+  const [departments, setDepartments] = useState<SnapshotDepartment[]>([]);
+
+  const resetForm = () => setForm({ employee_code: "", name: "", coming_from: "", summoned_department: "", purpose: "work" });
 
   useEffect(() => {
     const user = currentUser();
@@ -28,7 +31,6 @@ export default function TripClient({ id }: { id?: string | null }) {
       setError("لا توجد جلسة على هذا الجهاز — سجّل الدخول أولاً.");
       return;
     }
-    loadSnapshot().catch(() => {});
     let found: LocalTrip | null = null;
     if (id) {
       found = getLocalTrip(id, user.username);
@@ -41,6 +43,10 @@ export default function TripClient({ id }: { id?: string | null }) {
     } else {
       setError(id ? "الرحلة غير موجودة على هذا الجهاز" : "لا توجد رحلة نشطة — ابدأ رحلة من لوحة القيادة أو الرحلات المخططة");
     }
+    setDepartments(getAvailableDepartments(found?.company_code ?? null));
+    loadSnapshot()
+      .then(() => setDepartments(getAvailableDepartments(found?.company_code ?? null)))
+      .catch(() => {});
     setOnline(isOnline());
     const on = () => setOnline(true);
     const off = () => setOnline(false);
@@ -48,6 +54,36 @@ export default function TripClient({ id }: { id?: string | null }) {
     window.addEventListener("offline", off);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // إرسال تلقائي للرحلة المكتملة: فور الإكمال إن توفرت الشبكة، وعند عودتها لاحقاً
+  // دون أي تدخل من السائق. يُعاد المحاولة دورياً وبعودة التطبيق للمقدمة.
+  useEffect(() => {
+    const user = currentUser();
+    if (!user || !trip) return;
+    if (trip.status !== "completed" || trip.synced_at) return;
+    let cancelled = false;
+    const attempt = async () => {
+      if (cancelled || !isOnline()) return;
+      const r = await syncNow(user.username);
+      if (cancelled || !r.pushed) return;
+      setError("");
+      setMsg("تم إرسال الرحلة إلى النظام تلقائياً");
+      refresh(getLocalTrip(trip.id, user.username));
+    };
+    attempt();
+    const onOnline = () => { attempt(); };
+    const onVisible = () => { if (document.visibilityState === "visible") attempt(); };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(attempt, 30000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trip?.id, trip?.status, trip?.synced_at]);
 
   function refresh(t: LocalTrip | null) {
     const user = currentUser();
@@ -70,7 +106,7 @@ export default function TripClient({ id }: { id?: string | null }) {
     if (res.duplicated) setMsg("هذا الكود مُسجَّل مسبقاً في الرحلة");
     else if (res.notFound) {
       setError(`الكود «${c}» غير موجود في قاعدة البيانات — تحقق من الرقم، أو أضف الراكب يدوياً من النموذج أدناه`);
-      setForm({ employee_code: c, name: "", entity: "", purpose: "visitor" });
+      setForm({ employee_code: c, name: "", coming_from: "", summoned_department: "", purpose: "work" });
       setShowNew(true);
     } else if (res.trip) setMsg("تمت إضافة الموظف بنجاح");
     else setError("تعذر الإضافة — الرحلة غير نشطة");
@@ -80,12 +116,18 @@ export default function TripClient({ id }: { id?: string | null }) {
 
   function addNonEmp() {
     const user = currentUser();
-    if (!trip || !user || !form.name.trim()) return;
+    if (!trip || !user) return;
+    if (!form.name.trim()) { setError("أدخل اسم الراكب"); return; }
+    if (!form.coming_from.trim()) { setError("أدخل الجهة القادم منها"); return; }
+    if (!form.summoned_department.trim()) { setError("اختر الجهة التي استدعته"); return; }
+    setError("");
+    const comingFrom = form.coming_from.trim();
+    const summoned = form.summoned_department.trim();
     const t = form.employee_code.trim()
-      ? addNewPassengerToTrip(trip.id, user.username, { employee_code: form.employee_code.trim(), name: form.name.trim(), company: form.entity.trim(), visit_purpose: form.purpose })
-      : addNonEmployeePassenger(trip.id, user.username, { name: form.name, entity: form.entity, purpose: form.purpose });
+      ? addNewPassengerToTrip(trip.id, user.username, { employee_code: form.employee_code.trim(), name: form.name.trim(), coming_from: comingFrom, summoned_department: summoned, visit_purpose: form.purpose })
+      : addNonEmployeePassenger(trip.id, user.username, { name: form.name.trim(), coming_from: comingFrom, summoned_department: summoned, purpose: form.purpose });
     setMsg("تم حفظ بيانات الراكب");
-    setForm({ employee_code: "", name: "", entity: "", purpose: "visitor" });
+    resetForm();
     setShowNew(false);
     refresh(t);
   }
@@ -96,8 +138,9 @@ export default function TripClient({ id }: { id?: string | null }) {
     setEditForm({
       employee_code: p.employee_code || "",
       name: p.name || "",
-      entity: p.company || "",
-      purpose: p.visit_purpose || (p.source === "non_employee" ? "visitor" : "employee"),
+      coming_from: p.coming_from || p.company || "",
+      summoned_department: p.summoned_department || p.department || "",
+      purpose: p.visit_purpose || (p.source === "non_employee" ? "work" : "employee"),
     });
   }
 
@@ -107,9 +150,12 @@ export default function TripClient({ id }: { id?: string | null }) {
     setEditError("");
     if (editing.source === "non_employee") {
       if (!editForm.name.trim()) { setEditError("أدخل اسم الراكب"); return; }
+      if (!editForm.coming_from.trim()) { setEditError("أدخل الجهة القادم منها"); return; }
+      if (!editForm.summoned_department.trim()) { setEditError("اختر الجهة التي استدعته"); return; }
       const res = updatePassengerInTrip(trip.id, user.username, editing.client_uuid, {
         name: editForm.name,
-        company: editForm.entity,
+        coming_from: editForm.coming_from,
+        summoned_department: editForm.summoned_department,
         visit_purpose: editForm.purpose,
       });
       if (!res.trip) { setEditError("تعذر حفظ التعديل — الرحلة غير نشطة أو مكتملة"); return; }
@@ -145,33 +191,25 @@ export default function TripClient({ id }: { id?: string | null }) {
     const user = currentUser();
     if (!trip || !user) return;
     setBusy(true);
+    setError("");
     try {
       const t = completeLocalTrip(trip.id, user.username);
-      setMsg("تم إكمال الرحلة محلياً. يمكنك الآن إرسالها إلى النظام عند توفر الاتصال.");
       refresh(t);
-      if (isOnline()) {
-        const r = await syncNow(user.username);
-        if (r.pushed) setMsg(`تم إكمال الرحلة وإرسالها إلى النظام (${r.pushed})`);
-        else if (r.lastError) setError(r.lastError);
-      }
+      const canSend = isOnline() && (!!getConfig().power_automate_url.trim() || !!window.localStorage.getItem("access_token"));
+      setMsg(canSend
+        ? "تم إكمال الرحلة — جارٍ الإرسال إلى النظام..."
+        : "تم إكمال الرحلة — بانتظار الشبكة، وستُرسل تلقائياً فور توفّرها دون أي إجراء.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function sendNow() {
-    const user = currentUser();
-    if (!trip || !user) return;
-    setBusy(true);
-    setError("");
-    try {
-      const r = await syncNow(user.username);
-      if (r.pushed) setMsg("تم إرسال الرحلة إلى النظام بنجاح");
-      else setError(r.lastError || "لا توجد بيانات بانتظار الإرسال");
-      refresh(getLocalTrip(trip.id, user.username));
-    } finally {
-      setBusy(false);
-    }
+  function purposeLabel(v?: string | null): string {
+    const map: Record<string, string> = {
+      employee: "موظف", visitor: "زائر", work: "عمل", contractor: "مقاول", meeting: "اجتماع",
+      training: "تدريب", maintenance: "صيانة", delivery: "تسليم/شحن", business_mission: "مهمة عمل", other: "أخرى",
+    };
+    return v ? map[v] || v : "—";
   }
 
   function passengerTitle(p: LocalPassenger): string {
@@ -184,8 +222,9 @@ export default function TripClient({ id }: { id?: string | null }) {
   function passengerSubtitle(p: LocalPassenger): string {
     if (p.source === "non_employee") {
       const bits = [];
-      if (p.company) bits.push(`الجهة: ${p.company}`);
-      if (p.visit_purpose && p.visit_purpose !== "other") bits.push(`الغرض: ${p.visit_purpose}`);
+      if (p.coming_from || p.company) bits.push(`القادم من: ${p.coming_from || p.company}`);
+      if (p.summoned_department || p.department) bits.push(`استدعته: ${p.summoned_department || p.department}`);
+      bits.push(`الغرض: ${purposeLabel(p.visit_purpose)}`);
       return bits.join(" · ") || "غير موظف — للمراجعة";
     }
     const bits = [];
@@ -218,7 +257,6 @@ export default function TripClient({ id }: { id?: string | null }) {
   }
   const active = trip.status === "boarding";
   const synced = trip.status === "synced";
-  const readyToSend = trip.status === "completed" && !synced;
   const hasDeliveryRoute = !!getConfig().power_automate_url.trim() || (typeof window !== "undefined" && !!window.localStorage.getItem("access_token"));
   const routeLabel = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route_name || "—");
   return (
@@ -266,16 +304,26 @@ export default function TripClient({ id }: { id?: string | null }) {
                   <UserPlus size={22} />
                   <div><strong>{form.employee_code ? `إضافة موظف يدوياً — كود ${form.employee_code}` : "راكب غير موظف"}</strong><span>{form.employee_code ? "الرقم غير موجود في قاعدة البيانات، تُحفظ بياناته للمراجعة عند المشرف." : "تظهر بياناته للمشرف وتُحفظ على الجهاز."}</span></div>
                 </div>
-                <button className="link-btn" onClick={() => { setShowNew(false); setForm({ employee_code: "", name: "", entity: "", purpose: "visitor" }); }}>إلغاء</button>
+                <button className="link-btn" onClick={() => { setShowNew(false); resetForm(); }}>إلغاء</button>
               </div>
               <div className="form-grid">
                 {!form.employee_code && <label className="field"><span>كود الموظف (اختياري)</span><input value={form.employee_code} onChange={e => setForm({ ...form, employee_code: e.target.value })} inputMode="numeric" placeholder="مثال: 80045" /></label>}
                 <label className="field"><span>الاسم</span><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} autoFocus /></label>
-                <label className="field"><span>الجهة التي استدعته</span><input value={form.entity} onChange={e => setForm({ ...form, entity: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                <label className="field"><span>الجهة القادم منها</span><input value={form.coming_from} onChange={e => setForm({ ...form, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                <label className="field"><span>الجهة التي استدعته</span>
+                  {departments.length ? (
+                    <select value={form.summoned_department} onChange={e => setForm({ ...form, summoned_department: e.target.value })}>
+                      <option value="">— اختر الإدارة —</option>
+                      {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                    </select>
+                  ) : (
+                    <input value={form.summoned_department} onChange={e => setForm({ ...form, summoned_department: e.target.value })} placeholder="اسم الإدارة" />
+                  )}
+                </label>
                 <label className="field"><span>الغرض</span>
                   <select value={form.purpose} onChange={e => setForm({ ...form, purpose: e.target.value })}>
+                    <option value="work">عمل</option>
                     <option value="visitor">زائر</option>
-                    <option value="contractor">مقاول</option>
                     <option value="employee">موظف</option>
                     <option value="meeting">اجتماع</option>
                     <option value="training">تدريب</option>
@@ -285,7 +333,7 @@ export default function TripClient({ id }: { id?: string | null }) {
                   </select>
                 </label>
               </div>
-              <button className="primary-btn" onClick={addNonEmp} disabled={!form.name.trim()}>حفظ البيانات</button>
+              <button className="primary-btn" onClick={addNonEmp} disabled={!form.name.trim() || !form.coming_from.trim() || !form.summoned_department.trim()}>حفظ البيانات</button>
             </div>
           )}
           <button
@@ -329,7 +377,15 @@ export default function TripClient({ id }: { id?: string | null }) {
         </section>
       )}
       {synced && <div className="alert success">تم إرسال هذه الرحلة إلى النظام بنجاح.</div>}
-      {trip.status === "completed" && !synced && !hasDeliveryRoute && <div className="hint">لم يُضبط رابط إرسال ولا توجد جلسة خادم — عيّن رابط الإرسال في الإعدادات أو سجّل الدخول عبر الشبكة ثم أعد الإرسال من هذا الجهاز.</div>}
+      {trip.status === "completed" && !synced && (
+        <div className={`alert ${hasDeliveryRoute ? "" : "warning"}`}>
+          {!hasDeliveryRoute
+            ? "لا يوجد اتصال بالخادم — سجّل الدخول عبر الشبكة أو عيّن رابط الإرسال، وستُرسل الرحلة تلقائياً بعد ذلك."
+            : online
+              ? "جارٍ إرسال الرحلة إلى النظام..."
+              : "بانتظار الاتصال بالشبكة — ستُرسل الرحلة تلقائياً فور توفّرها دون أي إجراء منك."}
+        </div>
+      )}
       {active && <div className="hint">يمكنك تعديل أو حذف أي راكب أُضيف بالخطأ الآن. لا يمكن إرسال تقرير الرحلة إلى النظام إلا بعد إكمالها.</div>}
       {trip.status !== "boarding" && trip.passengers.length > 0 && (
         <section className="section">
@@ -346,10 +402,13 @@ export default function TripClient({ id }: { id?: string | null }) {
           </div>
         </section>
       )}
-      <section className="section actions-section">
-        <button className="secondary-btn" disabled={!active || busy} onClick={complete}>إكمال الرحلة</button>
-        <button className="primary-btn" disabled={!readyToSend || busy} onClick={sendNow}><Send size={16} style={{ verticalAlign: "-3px" }} /> إرسال إلى النظام</button>
-      </section>
+      {active && (
+        <section className="section actions-section">
+          <button className="primary-btn" disabled={busy} onClick={complete}>
+            {busy ? "جارٍ الإكمال والإرسال..." : "إكمال الرحلة وإرسالها"}
+          </button>
+        </section>
+      )}
       {editing && (
         <div className="modal-backdrop" onClick={() => setEditing(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -364,11 +423,22 @@ export default function TripClient({ id }: { id?: string | null }) {
               {editing.source === "non_employee" ? (
                 <>
                   <label className="field"><span>الاسم</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} autoFocus /></label>
-                  <label className="field"><span>الجهة التي استدعته</span><input value={editForm.entity} onChange={e => setEditForm({ ...editForm, entity: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                  <label className="field"><span>الجهة القادم منها</span><input value={editForm.coming_from} onChange={e => setEditForm({ ...editForm, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
+                  <label className="field"><span>الجهة التي استدعته</span>
+                    {departments.length ? (
+                      <select value={editForm.summoned_department} onChange={e => setEditForm({ ...editForm, summoned_department: e.target.value })}>
+                        <option value="">— اختر الإدارة —</option>
+                        {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                      </select>
+                    ) : (
+                      <input value={editForm.summoned_department} onChange={e => setEditForm({ ...editForm, summoned_department: e.target.value })} placeholder="اسم الإدارة" />
+                    )}
+                  </label>
                   <label className="field"><span>الغرض</span>
                     <select value={editForm.purpose} onChange={e => setEditForm({ ...editForm, purpose: e.target.value })}>
+                      <option value="work">عمل</option>
                       <option value="visitor">زائر</option>
-                      <option value="contractor">مقاول</option>
+                      <option value="employee">موظف</option>
                       <option value="meeting">اجتماع</option>
                       <option value="training">تدريب</option>
                       <option value="maintenance">صيانة</option>

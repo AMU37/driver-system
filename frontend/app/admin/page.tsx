@@ -6,7 +6,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { MultiSelect } from "@/components/MultiSelect";
 import {
   addBus, addCompany, addDepartment, addDriver, addAdminUser, addEmployeeMaster, addHousing, addJob, addRoute,
-  createAdminPlan, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
+  createAdminPlan, deleteAdminUser, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
   deleteHousing, deleteJob, deleteRoute, getAdminBuses, getAdminDrivers, getAdminEmployees,
   getAdminPlanned, getAdminTripReports, getAdminUsers, getCompanies, getDepartments, getHousing, getJobs, getNewEmployees,
   getRoutes, importEmployeesFile, reviewNewEmployee, updateBus, updateCompany, updateDepartment,
@@ -14,7 +14,7 @@ import {
   type PlannedTrip, type User,
 } from "@/lib/api";
 import { AlertTriangle, ArchiveRestore, BusFront, ChevronDown, ChevronUp, ClipboardList, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck, Users } from "lucide-react";
-import { useAuthGuard } from "@/lib/authGuard";
+import { currentUser, useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot, type TripType } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, downloadTable, openReportTripWhatsApp, openWhatsAppText, printTableReport, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText } from "@/lib/export";
@@ -35,8 +35,10 @@ const CYCLE_STATUS_OPTIONS: { value: CycleStatus | ""; label: string }[] = [
 const BOOL_OPTIONS = [{ value: true, label: "نشط" }, { value: false, label: "معطّل" }];
 const YESNO = (v: any) => (v ? "نشط" : "معطّل");
 const DASH = (v: any) => v || "—";
-const ROLE_LABEL: Record<string, string> = { driver: "سائق", supervisor: "مشرف", admin: "مدير" };
-const ROLE_OPTIONS = [{ value: "supervisor", label: "مشرف" }, { value: "admin", label: "أدمن" }];
+const ROLE_LABEL: Record<string, string> = { driver: "سائق", supervisor: "مشرف", admin: "مدير", viewer: "مستعرض" };
+const ROLE_OPTIONS = [{ value: "supervisor", label: "مشرف" }, { value: "admin", label: "أدمن" }, { value: "viewer", label: "مستعرض (اطلاع فقط)" }];
+const PERMISSION_OPTIONS = [{ value: "view", label: "عرض" }, { value: "add", label: "إضافة" }, { value: "edit", label: "تعديل" }, { value: "delete", label: "حذف" }];
+const PERMISSION_LABEL: Record<string, string> = { view: "عرض", add: "إضافة", edit: "تعديل", delete: "حذف" };
 
 const mapSnapshotDriver = (d: any) => ({ id: d.id, driver_code: d.driver_code ?? "", username: d.username, full_name: d.full_name, role: d.role, company_code: d.company_code, is_active: true });
 const mapSnapshotUsers = (u: any) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, driver_code: u.driver_code ?? "", company_code: u.company_code ?? "", is_active: true, must_change_password: false });
@@ -164,7 +166,8 @@ export const tripTypeLabel = (value?: string | null) => {
 };
 
 export default function AdminPage() {
-  useAuthGuard(["admin", "supervisor"]);
+  const me = useAuthGuard(["admin", "supervisor"]);
+  const isAdminUser = me?.role === "admin";
   const [tab, setTab] = useState<Tab>("plans");
   const [drivers, setDrivers] = useState<User[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -699,13 +702,15 @@ export default function AdminPage() {
   const userColumns: CrudColumn[] = [
     { key: "username", label: "اسم المستخدم" },
     { key: "full_name", label: "الاسم" },
-    { key: "role", label: "الدور", render: (i) => <span className={`status ${i.role === "admin" ? "status-completed" : i.role === "supervisor" ? "status-needs_review" : "status-local"}`}>{ROLE_LABEL[i.role] ?? i.role}</span> },
+    { key: "role", label: "الدور", render: (i) => <span className={`status ${i.role === "admin" ? "status-completed" : i.role === "supervisor" ? "status-needs_review" : i.role === "viewer" ? "status-planned" : "status-local"}`}>{ROLE_LABEL[i.role] ?? i.role}</span> },
+    { key: "permissions", label: "الصلاحيات", render: (i) => { const perms = (i.permissions && typeof i.permissions === "object") ? i.permissions : {}; const on = PERMISSION_OPTIONS.filter(o => perms[o.value]); if (!on.length) return <span className="perm-badge off">لا يوجد</span>; return <div className="perm-badges">{on.map(o => <span key={o.value} className="perm-badge">{PERMISSION_LABEL[o.value]}</span>)}</div>; } },
     { key: "is_active", label: "الحالة", render: (i) => YESNO(i.is_active) },
   ];
   const userFields: CrudField[] = [
     { key: "username", label: "اسم المستخدم", required: true, createOnly: true },
     { key: "full_name", label: "الاسم الكامل", required: true },
-    { key: "role", label: "الدور", type: "select", options: ROLE_OPTIONS, required: true, createOnly: true, help: "المدير: صلاحيات كاملة؛ المشرف: إدارة الرحلات والبيانات" },
+    { key: "role", label: "الدور", type: "select", options: ROLE_OPTIONS, required: true, createOnly: !isAdminUser, help: "المدير: صلاحيات كاملة؛ المشرف: إدارة الرحلات والبيانات؛ المستعرض: اطلاع وتصدير فقط." },
+    ...(isAdminUser ? [{ key: "permissions", label: "الصلاحيات", type: "checkboxes", options: PERMISSION_OPTIONS, full: true, help: "تُطبَّق على واجهات الإدارة. حساب المدير يملك كل الصلاحيات دائمًا. عند عدم التحديد تُستخدم القيم الافتراضية للدور." } as CrudField] : []),
     { key: "password", label: "كلمة المرور", type: "password", required: true, createOnly: true, help: "8 أحرف فأكثر، حروف وأرقام" },
     { key: "new_password", label: "كلمة مرور جديدة (اختياري)", type: "password", editOnly: true, help: "اتركه فارغاً لعدم تغييرها" },
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
@@ -1131,9 +1136,16 @@ export default function AdminPage() {
 
       {tab === "users" && (
         <CrudTable
-          title="المستخدمون" subtitle="جميع حسابات النظام (سائق/مشرف/أدمن) — تغيير كلمة مرور كل حساب تتم مستقلّة. إنشاء حساب جديد متاح للمدير."
+          title="المستخدمون" subtitle="جميع حسابات النظام (سائق/مشرف/أدمن/مستعرض) — إنشاء حساب وتعديل الدور متاحان للمدير."
           items={users} columns={userColumns} fields={userFields}
-          onSave={async (p, i) => { if (i !== undefined) await updateAdminUser(String(i), p); else await addAdminUser(p); afterAction("تم حفظ المستخدم"); }}
+          onSave={async (p, i) => {
+            if (i !== undefined) { await updateAdminUser(String(i), p); afterAction("تم حفظ المستخدم"); }
+            else { await addAdminUser(p); afterAction("تم حفظ المستخدم"); }
+          }}
+          onDelete={isAdminUser ? async id => {
+            const res = await deleteAdminUser(String(id));
+            afterAction(res.message || (res.deleted ? "تم حذف المستخدم" : "تم تعطيل المستخدم"));
+          } : undefined}
         />
       )}
 
@@ -1222,7 +1234,7 @@ export default function AdminPage() {
           <div className="table-scroll">
             <table>
               <thead>
-                <tr><th>الكود</th><th>الاسم</th><th>الوظيفة</th><th>الشركة</th><th>الرحلة</th><th>أضافه</th><th>الحالة</th><th>الإجراء</th></tr>
+                <tr><th>الكود</th><th>الاسم</th><th>الجهة القادم منها</th><th>الجهة التي استدعته</th><th>الوظيفة</th><th>الشركة</th><th>الرحلة</th><th>أضافه</th><th>الحالة</th><th>الإجراء</th></tr>
               </thead>
               <tbody>
                 {newEmployees.map(row => {
@@ -1231,6 +1243,8 @@ export default function AdminPage() {
                     <tr key={req.id}>
                       <td>{req.employee_code || "—"}</td>
                       <td><strong>{req.name}</strong></td>
+                      <td>{req.coming_from || "—"}</td>
+                      <td>{req.summoned_department || "—"}</td>
                       <td>{req.job_title || "—"}</td>
                       <td>{req.company || "—"}</td>
                       <td>{row.trip_number}</td>
@@ -1374,25 +1388,30 @@ export default function AdminPage() {
                     <div className="table-scroll" style={{ maxHeight: 260 }}>
                       <table>
                         <thead>
-                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>خطة الدوام</th><th>حالة الدورة</th><th>مطابقة الخطة</th><th>الحالة</th></tr>
+                          <tr><th>#</th><th>الكود</th><th>الاسم</th><th>الجهة القادم منها</th><th>الجهة التي استدعته</th><th>الإدارة</th><th>الشركة</th><th>السكن</th><th>خطة الدوام</th><th>حالة الدورة</th><th>مطابقة الخطة</th><th>الحالة</th></tr>
                         </thead>
                         <tbody>
-                          {reportEmployees.map((p, i) => (
+                          {reportEmployees.map((p, i) => {
+                            const nonEmp = p.is_employee === false || p.source === "non_employee";
+                            return (
                             <tr key={`${p.employee_code}-${i}`}>
                               <td>{i + 1}</td>
                               <td>{p.employee_code || "—"}</td>
                               <td><strong>{p.name || "—"}</strong></td>
-                              <td>{p.department || "—"}</td>
-                              <td>{p.company || "—"}</td>
+                              <td>{p.coming_from || (nonEmp ? (p.company || "—") : "—")}</td>
+                              <td>{p.summoned_department || (nonEmp ? (p.department || "—") : "—")}</td>
+                              <td>{nonEmp ? "—" : (p.department || "—")}</td>
+                              <td>{nonEmp ? "—" : (p.company || "—")}</td>
                               <td>{p.housing_location || "—"}</td>
                               <td>{p.employee_code ? scheduleCell(p.employee_code) : <small className="muted">غير موظف</small>}</td>
                               <td>{cycleCell(p)}</td>
                               <td>{matchCell(p)}</td>
                               <td>{reportEmployeeStatus(p)}</td>
                             </tr>
-                          ))}
+                            );
+                          })}
                           {!reportEmployees.length && (
-                            <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
+                            <tr><td colSpan={12} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لم تُسجَّل قائمة صاعدين مع هذا التقرير.</td></tr>
                           )}
                         </tbody>
                       </table>

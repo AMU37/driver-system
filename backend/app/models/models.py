@@ -16,6 +16,7 @@ class UserRole(str, enum.Enum):
     driver = "driver"
     supervisor = "supervisor"
     admin = "admin"
+    viewer = "viewer"
 
 
 class TripStatus(str, enum.Enum):
@@ -34,6 +35,7 @@ class EmployeeVisitPurpose(str, enum.Enum):
     employee = "employee"
     contractor = "contractor"
     visitor = "visitor"
+    work = "work"
     meeting = "meeting"
     training = "training"
     maintenance = "maintenance"
@@ -139,6 +141,7 @@ class User(Base):
     company_code: Mapped[str] = mapped_column(String(30), default="YCSR", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    permissions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -226,6 +229,8 @@ class TripEmployee(Base):
     department_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     company_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     housing_location_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    coming_from: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summoned_department: Mapped[str | None] = mapped_column(String(200), nullable=True)
     visit_purpose: Mapped[str] = mapped_column(String(50), default=EmployeeVisitPurpose.employee.value)
     boarded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     source: Mapped[str] = mapped_column(String(30), default="employee_master")
@@ -245,6 +250,8 @@ class NewEmployeeRequest(Base):
     job_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     department: Mapped[str | None] = mapped_column(String(200), nullable=True)
     company: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    coming_from: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summoned_department: Mapped[str | None] = mapped_column(String(200), nullable=True)
     visit_purpose: Mapped[str] = mapped_column(String(50))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")

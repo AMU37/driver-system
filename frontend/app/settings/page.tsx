@@ -123,7 +123,7 @@ export default function SettingsPage() {
       <div className="stack-lg" style={{ maxWidth: 640 }}>
         <label className="field"><span>رابط الخادم (مثال: https://driver-system-mcku.onrender.com)</span><input value={server} onChange={e => setServer(e.target.value)} placeholder="اتركه فارغاً للاتصال بخادم النظام تلقائياً"/></label>
         <div className="modal-actions"><button className="secondary-btn" onClick={save}><Save size={16} style={{ verticalAlign: "-3px" }}/> حفظ الإعدادات</button></div>
-        <div className="hint">الإصدار الحالي يتصل بخادم النظام تلقائياً دون ربطه هنا. يمكن ضبط رابط مخصص (http://IP:8001 لخادم محلي على نفس الشبكة).</div>
+        <div className="hint">الإصدار الحالي يتصل بخادم النظام تلقائياً دون ربطه هنا. يمكن ضبط رابط مخصص (http://IP:8001 لخادم محلي على نفس الشبكة). عند فتح التطبيق من «localhost» يُستخدم الخادم المحلي دائماً ويُتجاهل هذا الرابط.</div>
       </div>
     </section>
     <section className="section">

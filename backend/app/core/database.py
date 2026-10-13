@@ -65,8 +65,33 @@ def migrate_schema() -> None:
                 conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN trip_type VARCHAR(20)")
         except Exception:
             continue
+    if not column_exists("users", "permissions"):
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN permissions JSON")
+        except Exception:
+            pass
     _migrate_employee_schedule_columns()
+    _migrate_non_employee_columns()
     _normalize_datetime_columns()
+
+
+def _migrate_non_employee_columns() -> None:
+    """ADD COLUMN migrations for the non-employee origin/requesting fields."""
+    columns = [
+        ("trip_employees", "coming_from", "VARCHAR(200)"),
+        ("trip_employees", "summoned_department", "VARCHAR(200)"),
+        ("new_employee_requests", "coming_from", "VARCHAR(200)"),
+        ("new_employee_requests", "summoned_department", "VARCHAR(200)"),
+    ]
+    for table, column, ddl_type in columns:
+        if column_exists(table, column):
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+        except Exception:
+            continue
 
 
 def _migrate_employee_schedule_columns() -> None:

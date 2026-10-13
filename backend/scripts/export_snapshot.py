@@ -89,6 +89,30 @@ def main():
         )
     ]
 
+    companies = [
+        {
+            "id": r["id"],
+            "code": r["code"],
+            "name": r["name"],
+            "is_active": bool(r["is_active"]),
+        }
+        for r in db.execute(
+            """SELECT id, code, name, is_active FROM companies ORDER BY code"""
+        )
+    ]
+
+    departments = [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "company_id": r["company_id"],
+            "is_active": bool(r["is_active"]),
+        }
+        for r in db.execute(
+            """SELECT id, name, company_id, is_active FROM departments ORDER BY name"""
+        )
+    ]
+
     drivers = [
         {
             "id": r["id"],
@@ -177,12 +201,16 @@ def main():
             "employees": len(employees),
             "buses": len(buses),
             "routes": len(routes),
+            "companies": len(companies),
+            "departments": len(departments),
             "drivers": len(drivers),
             "planned": len(planned),
         },
         "employees": employees,
         "buses": buses,
         "routes": routes,
+        "companies": companies,
+        "departments": departments,
         "drivers": drivers,
         "planned": planned,
     }
