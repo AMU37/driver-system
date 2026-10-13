@@ -39,6 +39,52 @@ def column_exists(table: str, column: str) -> bool:
         return row is not None
 
 
+def _ensure_pg_enum_values() -> None:
+    """Ensure Postgres native enum columns contain every value the app uses.
+
+    Databases created before a role/status value existed still lack that label,
+    so queries such as ``WHERE role IN (..., 'viewer')`` (the admin users list)
+    fail with a 500. ``create_all`` never alters existing enum types, so we add
+    any missing labels explicitly. No-op on SQLite.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+    from app.models.models import IntegrationStatus, TripStatus, UserRole
+
+    targets = [
+        ("users", "role", UserRole),
+        ("planned_trips", "status", TripStatus),
+        ("trips", "status", TripStatus),
+        ("integration_logs", "status", IntegrationStatus),
+    ]
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        for table, column, enum_cls in targets:
+            type_name = conn.exec_driver_sql(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name = %s AND column_name = %s",
+                (table, column),
+            ).scalar()
+            if not type_name:
+                continue
+            existing = {
+                row[0]
+                for row in conn.exec_driver_sql(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON e.enumtypid = t.oid WHERE t.typname = %s",
+                    (type_name,),
+                ).fetchall()
+            }
+            for label in (member.name for member in enum_cls):
+                if label in existing:
+                    continue
+                try:
+                    conn.exec_driver_sql(
+                        f'ALTER TYPE "{type_name}" ADD VALUE IF NOT EXISTS \'{label}\''
+                    )
+                except Exception:
+                    continue
+
+
 def migrate_schema() -> None:
     """Lightweight additive migrations for columns added after first deploy.
 
@@ -74,6 +120,7 @@ def migrate_schema() -> None:
     _migrate_employee_schedule_columns()
     _migrate_non_employee_columns()
     _normalize_datetime_columns()
+    _ensure_pg_enum_values()
 
 
 def _migrate_non_employee_columns() -> None:

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { BusFront, KeyRound, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
 import { getStoredUser, type User } from "@/lib/api";
-import { findDriver, hasLocalPin, isOnline, loadLocalSession, loadSnapshot, setLocalPin, storeLocalSession, tryOnlineLogin, verifyLocalPin, type SnapshotDriver } from "@/lib/offlineStore";
+import { backendBaseUrl, findDriver, hasLocalPin, isOnline, loadLocalSession, loadSnapshot, setLocalPin, storeLocalSession, tryOnlineLogin, verifyLocalPin, type SnapshotDriver } from "@/lib/offlineStore";
 import { findLocalDriverAccount } from "@/lib/adminOps";
 import { routePath, homeForRole } from "@/lib/nav";
 
@@ -62,7 +62,7 @@ export default function LoginPage() {
         setError(
           res.code === "unauthorized"
             ? "اسم المستخدم أو كلمة المرور غير صحيحة"
-            : "تعذر التحقق من الحساب دون اتصال. تأكد من اسم المستخدم أو عُد عند توفر الشبكة."
+            : `تعذر التحقق من الحساب دون اتصال. [${res.detail ?? "?"}]`
         );
         return;
       }
@@ -76,7 +76,7 @@ export default function LoginPage() {
       setPins(["", ""]);
       setPhase(hasLocalPin(account.username) ? "verify_pin" : "set_pin");
     } catch {
-      setError("تعذر الاتصال بالخادم. حاول مجدداً.");
+      setError(`تعذر الاتصال بالخادم. حاول مجدداً. [${backendBaseUrl() || "no-base"}]`);
     } finally {
       setLoading(false);
     }

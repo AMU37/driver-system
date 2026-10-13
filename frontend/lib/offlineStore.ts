@@ -116,7 +116,18 @@ function pinKey(username: string): string {
 }
 
 export function isNativePlatform(): boolean {
-  return typeof Capacitor !== "undefined" && !!Capacitor.isNativePlatform && Capacitor.isNativePlatform();
+  if (typeof window === "undefined") return false;
+  const candidates: any[] = [(window as any).Capacitor, typeof Capacitor !== "undefined" ? Capacitor : null];
+  for (const c of candidates) {
+    if (!c) continue;
+    try {
+      if (typeof c.isNativePlatform === "function" && c.isNativePlatform()) return true;
+      if (typeof c.getPlatform === "function" && c.getPlatform() !== "web") return true;
+      if (c.isNative === true) return true;
+      if (typeof c.platform === "string" && c.platform !== "web") return true;
+    } catch { /* ignore */ }
+  }
+  return false;
 }
 
 function loadJSON<T>(key: string, fallback: T): T {
@@ -158,9 +169,14 @@ export function isLocalHostUrl(url: string): boolean {
 /** True when the web app itself is being served from a local development host. */
 export function isLocalPageHost(): boolean {
   if (typeof window === "undefined") return false;
-  if (isNativePlatform()) return false;
-  const host = window.location.hostname;
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  // Never treat the Capacitor native webview as a local dev host: it runs on
+  // https://localhost, the same hostname as a local dev server.
+  if (isNativePlatform() || (window as any).Capacitor) return false;
+  const { hostname, port, protocol } = window.location;
+  if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1") return false;
+  // A real dev server exposes an explicit port (e.g. :3333); the native webview
+  // serves https://localhost with no port.
+  return protocol === "http:" || (port !== "" && port !== "80" && port !== "443");
 }
 
 export function backendBaseUrl(): string {
@@ -392,12 +408,13 @@ export function hasLocalPin(username: string): boolean {
   return !!loadJSON<{ salt: string; hash: string } | null>(pinKey(username), null);
 }
 
-export async function tryOnlineLogin(username: string, password: string): Promise<{ ok: true; user: OfflineUser } | { ok: false; code: "unauthorized" | "unreachable" }> {
+export async function tryOnlineLogin(username: string, password: string): Promise<{ ok: true; user: OfflineUser } | { ok: false; code: "unauthorized" | "unreachable"; detail?: string }> {
   const base = backendBaseUrl();
-  if (!base) return { ok: false, code: "unreachable" };
+  if (!base) return { ok: false, code: "unreachable", detail: "no-base-url" };
   // إعادة المحاولة تلقائياً (على الأقل مرتين) قبل التحول إلى الدخول المحلي:
   // الخادم على Render يعيد الإقلاع البارد عند الخمول وقد يستغرق 30-60 ثانية.
   const attempts = 2;
+  let lastDetail = "no-response";
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const res = await nativeRequest(`${base}/api/auth/login`, {
@@ -421,12 +438,14 @@ export async function tryOnlineLogin(username: string, password: string): Promis
       // حتى لا نمنع السائق من استخدام رمز PIN المحلي على هذا الجهاز.
       const code = res.status === 401 ? "unauthorized" : "unreachable";
       if (code === "unauthorized") return { ok: false, code };
+      lastDetail = `status=${res.status} native=${isNativePlatform()}`;
       if (attempt < attempts - 1) await sleep(2000);
-    } catch {
+    } catch (e) {
+      lastDetail = `err=${e instanceof Error ? e.message : String(e)} native=${isNativePlatform()}`;
       if (attempt < attempts - 1) await sleep(2000);
     }
   }
-  return { ok: false, code: "unreachable" };
+  return { ok: false, code: "unreachable", detail: `${base} | ${lastDetail}` };
 }
 
 export function findDriver(username: string): SnapshotDriver | null {
