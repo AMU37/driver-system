@@ -146,4 +146,4 @@ def static_site(path: str):
     index = dist_root / "index.html"
     if index.is_file():
         return FileResponse(index)
-    return JSONResponse({"detail": "not found"}, status_code=404)
+    return JSONResponse({"detail": "not found"}, status_code=404)# redeploy trigger v1.0.7
