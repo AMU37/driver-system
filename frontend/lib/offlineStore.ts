@@ -1035,7 +1035,21 @@ export async function reportTripToBackend(trip: LocalTrip): Promise<{ ok: boolea
   }
 }
 
-export async function syncNow(driverUsername: string): Promise<{ pending: number; pushed: number; failed: number; lastError?: string }> {
+type SyncResult = { pending: number; pushed: number; failed: number; lastError?: string };
+let syncInFlight: Promise<SyncResult> | null = null;
+
+/**
+ * يدفع الرحلات المكتملة إلى الخادم. قفل داخلي يمنع تشغيل مزامنتين
+ * متزامنتين (زر المزامنة + الإرسال التلقائي + مؤقت الفحص) حتى لا تُرسل
+ * الرحلة نفسها مرتين في وقت واحد فيُنشئ الخادم تقريرين مكرّرين.
+ */
+export function syncNow(driverUsername: string): Promise<SyncResult> {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = runSync(driverUsername).finally(() => { syncInFlight = null; });
+  return syncInFlight;
+}
+
+async function runSync(driverUsername: string): Promise<SyncResult> {
   const config = getConfig();
   const url = config.power_automate_url.trim();
   const base = backendBaseUrl();

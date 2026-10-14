@@ -356,6 +356,18 @@ def trip_reports(user: User = Depends(require_roles(UserRole.supervisor, UserRol
     return out
 
 
+@router.delete("/trip-reports/{report_id}")
+def delete_trip_report(report_id: int, user: User = Depends(require_roles(UserRole.admin)), db: Session = Depends(get_db)):
+    """حذف تقرير رحلة (للمدير فقط) لتصحيح التكرار بعد الإرسال."""
+    r = db.get(TripReport, report_id)
+    if not r:
+        raise HTTPException(404, "التقرير غير موجود")
+    trip_num = r.trip_number
+    db.delete(r)
+    db.commit()
+    return {"ok": True, "deleted_id": report_id, "trip_number": trip_num}
+
+
 @router.post("/new-employees/{request_id}/review")
 def review_new_employee(request_id: int, payload: NewEmployeeReview, user: User = Depends(require_roles(UserRole.supervisor, UserRole.admin)), db: Session = Depends(get_db)):
     req = db.scalar(select(NewEmployeeRequest).where(NewEmployeeRequest.id == request_id))

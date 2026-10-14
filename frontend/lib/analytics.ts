@@ -139,6 +139,56 @@ export function passengerStatus(p: any, emp: any, day: string, want: "arriving" 
 }
 
 /* ------------------------------------------------------------------ */
+/* تصنيف المخالفات (صعد في غير دوامه/خطته)                              */
+/* ------------------------------------------------------------------ */
+
+export type ViolationKind = "duty" | "transport" | "duplicate" | "unknown" | "nonemp";
+
+export const VIOLATION_KIND_ORDER: ViolationKind[] = ["duty", "transport", "duplicate", "unknown", "nonemp"];
+
+export const VIOLATION_KIND_LABEL: Record<ViolationKind, string> = {
+  duty: "مخالف لخطة الدوام (صعد في يوم راحة/إجازة)",
+  transport: "مخالف لخطة النقل (صعد في يوم ترتيب مواصلات)",
+  duplicate: "تسجيل مكرر (صعد في رحلة سابقة)",
+  unknown: "غير مسجّل في الكشف",
+  nonemp: "غير موظف",
+};
+
+/** نوع المخالفة من حالة الراكب وحالة دوريّته والتسجيل المكرر. */
+export function violationKindId(status: string, cycleStatus?: string | null, duplicate?: boolean): ViolationKind | null {
+  if (status === "match") return duplicate ? "duplicate" : null;
+  if (duplicate) return "duplicate";
+  if (status === "nonemp") return "nonemp";
+  if (status === "unknown") return "unknown";
+  return cycleStatus === "transport_arrange" ? "transport" : "duty";
+}
+
+/**
+ * خريطة «أول رحلة صعد فيها» كل موظف في يومٍ ما (لكل اتجاه) — لكشف التسجيل المكرر.
+ * المفتاح: `${الكود}|arriving|departing`، والقيمة: رقم أول رحلة.
+ */
+export function firstBoardedTripMap(reports: any[], day: string): Map<string, string> {
+  const first = new Map<string, string>();
+  const dayReports = reports
+    .filter((r) => dayOfValue(reportTripDate(r)) === day)
+    .sort((a, b) => String(reportTripDate(a) || "").localeCompare(String(reportTripDate(b) || "")));
+  for (const r of dayReports) {
+    const type = reportType(r);
+    if (type !== "قادم" && type !== "مغادر") continue;
+    const dir = type === "قادم" ? "arriving" : "departing";
+    const tripNo = String(r?.trip_number || r?.raw?.trip?.trip_id || "—").trim() || "؟";
+    const { employees } = reportTripOf(r);
+    for (const p of employees) {
+      const code = p?.employee_code ? String(p.employee_code).trim() : "";
+      if (!code) continue;
+      const key = `${code}|${dir}`;
+      if (!first.has(key)) first.set(key, tripNo);
+    }
+  }
+  return first;
+}
+
+/* ------------------------------------------------------------------ */
 /* الرحلات المفترضة (من خطة دوام الموظفين ÷ سعة الباص)                  */
 /* ------------------------------------------------------------------ */
 
@@ -172,6 +222,50 @@ export function plannedTripsForDay(
     if (n) trips += Math.ceil(n / cap);
   }
   return trips;
+}
+
+/** عدد الموظفين المجدولين (الصاعدون المتوقّعون) في يومٍ ما = من تطابق دوريتهم الاتجاه/الفلتر. */
+export function plannedBoardersForDay(
+  employees: any[],
+  day: string,
+  filter: DirectionFilter,
+  groupFilter?: (emp: any) => boolean,
+): number {
+  const wanted = directionsOf(filter);
+  let n = 0;
+  for (const dir of wanted) {
+    for (const emp of employees) {
+      if (emp?.is_active === false) continue;
+      if (groupFilter && !groupFilter(emp)) continue;
+      const cycle = employeeCycle(emp, day);
+      if (!cycle) continue;
+      if (!matchesTripDirection(cycle.status, dir)) continue;
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/** عدد الموظفين المجدولين (المفترض) في يومٍ ما حسب السكن/الحالة (بلا تقسيم على سعة الباص). */
+export function plannedHeadcountForDay(
+  employees: any[],
+  day: string,
+  filter: DirectionFilter,
+  groupFilter?: (emp: any) => boolean,
+): number {
+  const wanted = directionsOf(filter);
+  let n = 0;
+  for (const dir of wanted) {
+    for (const emp of employees) {
+      if (emp?.is_active === false) continue;
+      if (groupFilter && !groupFilter(emp)) continue;
+      const cycle = employeeCycle(emp, day);
+      if (!cycle) continue;
+      if (!matchesTripDirection(cycle.status, dir)) continue;
+      n += 1;
+    }
+  }
+  return n;
 }
 
 /* ------------------------------------------------------------------ */

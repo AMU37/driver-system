@@ -4,24 +4,28 @@ import AppShell from "@/components/AppShell";
 import CrudTable, { type CrudColumn, type CrudField } from "@/components/CrudTable";
 import StatusBadge from "@/components/StatusBadge";
 import { MultiSelect } from "@/components/MultiSelect";
+import TripsOverview from "@/components/TripsOverview";
+import TripsBreakdown from "@/components/TripsBreakdown";
 import {
   addBus, addCompany, addDepartment, addDriver, addAdminUser, addEmployeeMaster, addHousing, addJob, addRoute,
-  createAdminPlan, deleteAdminUser, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
+  createAdminPlan, deleteAdminTripReport, deleteAdminUser, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
   deleteHousing, deleteJob, deleteRoute, getAdminBuses, getAdminDrivers, getAdminEmployees,
   getAdminPlanned, getAdminTripReports, getAdminUsers, getCompanies, getDepartments, getHousing, getJobs, getNewEmployees,
   getRoutes, importEmployeesFile, reviewNewEmployee, updateBus, updateCompany, updateDepartment,
   updateAdminUser, updateDriver, updateEmployeeMaster, updateHousing, updateJob, updateRoute,
   type PlannedTrip, type User,
 } from "@/lib/api";
-import { AlertTriangle, ArchiveRestore, BusFront, ChevronDown, ChevronUp, ClipboardList, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Upload, UserCheck, Users } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, BusFront, ChevronDown, ChevronUp, ClipboardList, Copy, Download, Eye, FileSpreadsheet, MessageCircle, Plus, Printer, RefreshCw, Send, Trash2, Upload, UserCheck, Users } from "lucide-react";
 import { currentUser, useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot, type TripType } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
-import { downloadContent, downloadTable, openReportTripWhatsApp, openWhatsAppText, printTableReport, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText } from "@/lib/export";
+import { downloadContent, downloadTable, downloadSectionsXls, openReportTripWhatsApp, openWhatsAppText, printTableReport, printReportSections, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText, type ReportSection } from "@/lib/export";
 import { employeeCycle, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
+import { VIOLATION_KIND_LABEL, VIOLATION_KIND_ORDER, violationKindId, type ViolationKind } from "@/lib/analytics";
+import { DRIVER_SCORE, TRIP_TIME_WINDOWS, evaluateDrivers, windowsLabel } from "@/lib/driverEval";
 import { effectivePermissions } from "@/lib/permissions";
 
-type Tab = "plans" | "planner" | "daily" | "actual" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
+type Tab = "plans" | "planner" | "daily" | "actual" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare" | "breakdown" | "drivers_eval";
 
 const CYCLE_STATUS_OPTIONS: { value: CycleStatus | ""; label: string }[] = [
   { value: "", label: "كل الحالات" },
@@ -142,6 +146,7 @@ export type ActualRow = {
   name: string;
   housing: string;
   department: string;
+  company: string;
   schedule: string;
   driver: string;
   bus: string;
@@ -208,6 +213,7 @@ function actualRowsForDate(reports: any[], dateValue: string, employees: any[]):
         name: p.name || emp?.name || "—",
         housing: p.housing_location || emp?.housing_location || "—",
         department: p.department || emp?.department_name || "—",
+        company: p.company || emp?.company_name || "—",
         schedule: emp?.schedule_desc || emp?.work_schedule || "—",
         driver,
         bus,
@@ -273,7 +279,11 @@ export default function AdminPage() {
   const [actualDriver, setActualDriver] = useState("");
   const [actualBus, setActualBus] = useState("");
   const [actualHousing, setActualHousing] = useState("");
+  const [actualCompany, setActualCompany] = useState("");
+  const [actualDepartment, setActualDepartment] = useState("");
   const [actualStatus, setActualStatus] = useState("");
+  const [evalDate, setEvalDate] = useState<string>(todayIso());
+  const [evalSearch, setEvalSearch] = useState("");
   const [planDate, setPlanDate] = useState<string>(todayIso());
   const [planHousing, setPlanHousing] = useState<string[]>([]);
   const [planRouteFilter, setPlanRouteFilter] = useState<string[]>([]);
@@ -510,6 +520,20 @@ export default function AdminPage() {
   function afterAction(message: string) {
     setMsg(message);
     load(true);
+  }
+
+  /** حذف تقرير رحلة مكرر (مدير النظام فقط) ثم تحديث القائمة. */
+  async function deleteReport(r: any) {
+    if (!isAdminUser) return;
+    const who = r.driver_name || r.driver_username || "—";
+    if (!window.confirm(`حذف تقرير الرحلة «${r.trip_number}» نهائياً؟\nالسائق: ${who} · الصاعدون: ${r.employee_count ?? 0}\nلا يمكن التراجع عن الحذف.`)) return;
+    try {
+      await deleteAdminTripReport(r.id);
+      setViewReport((v: any) => (v && v.id === r.id ? null : v));
+      afterAction("تم حذف تقرير الرحلة");
+    } catch {
+      setMsg("تعذر حذف التقرير — تأكد من الاتصال بالخادم وصلاحية المدير");
+    }
   }
 
   function hasSessionToken(): boolean {
@@ -956,6 +980,9 @@ export default function AdminPage() {
         </div>
         <button className="secondary-btn" onClick={initialize} disabled={loading}><RefreshCw size={17} />تحديث</button>
       </div>
+
+      <TripsOverview reports={reports} employees={allEmployees} buses={buses} />
+
       {msg && <div className={`alert ${msg.includes("تعذر") || msg.includes("مطلوب") || msg.includes("غير صحيحة") ? "danger" : "success"}`}>{msg}</div>}
 
       {pendingAdminOps.length > 0 && (
@@ -1021,7 +1048,9 @@ export default function AdminPage() {
             { key: "actual", label: "الموظفون الفعليون" },
           ] },
           { key: "reports", label: "المقارنات والتقارير", tabs: [
+            { key: "breakdown", label: "عدد الرحلات (باص/سائق/سكن)" },
             { key: "compare", label: "المخطط مقابل الفعلي" },
+            { key: "drivers_eval", label: "تقييم السائقين" },
           ] },
           { key: "hr", label: "الموظفون", tabs: [
             { key: "employees", label: `الموظفون (${employees.length})` },
@@ -1491,7 +1520,10 @@ export default function AdminPage() {
                         <td>{r.received_at ? new Date(r.received_at).toLocaleString("ar-EG") : "—"}</td>
                         <td><span className={`status ${st}`}>{reportStatusLabel(r.integration_status)}</span></td>
                         <td>
-                          <button className="secondary-btn" onClick={() => setViewReport(r)}><Eye size={15} />عرض</button>
+                          <div className="row-actions">
+                            <button className="secondary-btn" onClick={() => setViewReport(r)}><Eye size={15} />عرض</button>
+                            {isAdminUser && <button className="danger-btn" onClick={() => deleteReport(r)}><Trash2 size={15} />حذف</button>}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1790,13 +1822,17 @@ export default function AdminPage() {
         const driverOptions = Array.from(new Set(all.map((r) => r.driver))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
         const busOptions = Array.from(new Set(all.map((r) => r.bus))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
         const housingOptions = Array.from(new Set(all.map((r) => r.housing))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
+        const companyOptions = Array.from(new Set(all.map((r) => r.company))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
+        const departmentOptions = Array.from(new Set(all.map((r) => r.department))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
         const rows = all
-          .filter((r) => !q || [r.code, r.name, r.housing, r.department, r.driver, r.bus, r.route, r.tripNumber].some((v) => String(v ?? "").toLowerCase().includes(q)))
+          .filter((r) => !q || [r.code, r.name, r.housing, r.department, r.company, r.driver, r.bus, r.route, r.tripNumber].some((v) => String(v ?? "").toLowerCase().includes(q)))
           .filter((r) => !actualOnlyViolation || r.status !== "match")
           .filter((r) => !actualType || r.tripType === actualType)
           .filter((r) => !actualDriver || r.driver === actualDriver)
           .filter((r) => !actualBus || r.bus === actualBus)
           .filter((r) => !actualHousing || r.housing === actualHousing)
+          .filter((r) => !actualCompany || r.company === actualCompany)
+          .filter((r) => !actualDepartment || r.department === actualDepartment)
           .filter((r) => !actualStatus || (actualStatus === "match" ? r.status === "match" : r.status !== "match"));
         const statusNoteOf = (r: ActualRow) =>
           r.note ||
@@ -1808,6 +1844,20 @@ export default function AdminPage() {
         const actualSubtitle = `التاريخ: ${dateValue} · عدد الصاعدين: ${rows.length}`;
         const count = (s: ActualRow["status"]) => all.filter((r) => r.status === s).length;
         const dupCount = all.filter((r) => r.duplicate).length;
+        const kindCount = new Map<ViolationKind, number>();
+        const violByEmp = new Map<string, { name: string; housing: string; count: number }>();
+        for (const r of all) {
+          const kind = violationKindId(r.status, r.cycle?.status ?? null, r.duplicate);
+          if (!kind) continue;
+          kindCount.set(kind, (kindCount.get(kind) || 0) + 1);
+          const key = r.code || r.name || "?";
+          const cur = violByEmp.get(key) || { name: r.name || "—", housing: r.housing || "—", count: 0 };
+          cur.count += 1;
+          violByEmp.set(key, cur);
+        }
+        const kindRows = VIOLATION_KIND_ORDER.map((kind) => ({ kind, label: VIOLATION_KIND_LABEL[kind], count: kindCount.get(kind) || 0 })).filter((x) => x.count > 0);
+        const kindTotal = kindRows.reduce((s, x) => s + x.count, 0);
+        const topViolators = Array.from(violByEmp.values()).sort((a, b) => b.count - a.count).slice(0, 10);
         const statusCell = (r: ActualRow) => {
           if (r.status === "match") return <span className="status status-completed">حسب الخطة</span>;
           return <span className="stack-cell"><span className="status status-cancelled">مخالف</span><small>{statusNoteOf(r)}</small></span>;
@@ -1861,6 +1911,18 @@ export default function AdminPage() {
                 <select value={actualHousing} onChange={(e) => setActualHousing(e.target.value)}>
                   <option value="">كل الخطوط</option>
                   {housingOptions.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </label>
+              <label className="field" style={{ minWidth: 160 }}><span>الشركة</span>
+                <select value={actualCompany} onChange={(e) => setActualCompany(e.target.value)}>
+                  <option value="">كل الشركات</option>
+                  {companyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <label className="field" style={{ minWidth: 160 }}><span>الإدارة</span>
+                <select value={actualDepartment} onChange={(e) => setActualDepartment(e.target.value)}>
+                  <option value="">كل الإدارات</option>
+                  {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </label>
               <label className="field" style={{ minWidth: 160 }}><span>المطابقة</span>
@@ -1917,9 +1979,73 @@ export default function AdminPage() {
                 </table>
               </div>
             </div>
+
+            <div className="ov-two">
+              <div className="table-card ov-card">
+                <div className="ov-card-title">
+                  توزيع المخالفات حسب النوع
+                  <small>التاريخ: {dateValue} · إجمالي المخالفين {kindTotal}</small>
+                </div>
+                <div className="table-scroll">
+                  <table className="ov-mini">
+                    <thead>
+                      <tr><th>نوع المخالفة</th><th>العدد</th><th>النسبة من الإجمالي</th></tr>
+                    </thead>
+                    <tbody>
+                      {kindRows.length ? (
+                        kindRows.map((k) => (
+                          <tr key={k.kind}>
+                            <td className="ov-line">{k.label}</td>
+                            <td>{k.count}</td>
+                            <td><strong>{kindTotal ? `${Math.round((k.count / kindTotal) * 1000) / 10}%` : "—"}</strong></td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={3} className="muted">لا توجد مخالفات</td></tr>
+                      )}
+                      {kindTotal > 0 && (
+                        <tr className="ov-total"><td className="ov-line">الإجمالي</td><td>{kindTotal}</td><td>100%</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-card ov-card">
+                <div className="ov-card-title">
+                  أكثر الموظفين مخالفة
+                  <small>التاريخ: {dateValue} · أعلى {Math.min(10, topViolators.length)} موظف</small>
+                </div>
+                <div className="table-scroll">
+                  <table className="ov-mini">
+                    <thead>
+                      <tr><th>#</th><th>الاسم</th><th>السكن</th><th>المخالفات</th></tr>
+                    </thead>
+                    <tbody>
+                      {topViolators.length ? (
+                        topViolators.map((v, i) => (
+                          <tr key={`${v.name}-${i}`}>
+                            <td>{i + 1}</td>
+                            <td className="ov-line">{v.name}</td>
+                            <td>{v.housing}</td>
+                            <td className={v.count ? "ov-viol" : ""}>{v.count}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={4} className="muted">لا توجد مخالفات</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           </>
         );
       })()}
+
+      {tab === "breakdown" && (
+        <TripsBreakdown reports={reports} employees={allEmployees} onRefresh={() => load(true)} />
+      )}
 
       {tab === "compare" && (() => {
         const dateValue = cycleDate || todayIso();
@@ -2093,6 +2219,142 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
+          </>
+        );
+      })()}
+
+      {tab === "drivers_eval" && (() => {
+        const day = evalDate || todayIso();
+        const result = evaluateDrivers({ drivers, reports, employees: allEmployees, day });
+        const q = evalSearch.trim().toLowerCase();
+        const rows = result.rows.filter((r) => !q || [r.name, r.username, r.code, r.company].some((v) => String(v ?? "").toLowerCase().includes(q)));
+        const transported = rows.filter((r) => r.transported).length;
+        const notTransported = rows.length - transported;
+        const avg = rows.length ? Math.round(rows.reduce((s, r) => s + r.score, 0) / rows.length) : 0;
+        const totalTransfer = rows.reduce((s, r) => s + r.transferViol, 0);
+        const scoreClass = (n: number) => (n >= 85 ? "status-completed" : n >= 70 ? "status-started" : n > 0 ? "status-cancelled" : "status-planned");
+        const windowsRows: Array<[string, string, string]> = [
+          ["الحديدة", "قادم", windowsLabel(TRIP_TIME_WINDOWS.الحديدة.قادم)],
+          ["الحديدة", "مغادر", windowsLabel(TRIP_TIME_WINDOWS.الحديدة.مغادر)],
+          ["الصليف", "قادم", windowsLabel(TRIP_TIME_WINDOWS.الصليف.قادم)],
+          ["الصليف", "مغادر", windowsLabel(TRIP_TIME_WINDOWS.الصليف.مغادر)],
+        ];
+        const buildExport = () => {
+          const me = currentUser();
+          const title = "تقييم السائقين — ترحيل الرحلات الفعلية";
+          const meta = [
+            `التاريخ: ${day}`,
+            me ? `المستخدم: ${me.full_name || me.username} (${me.username})` : "",
+            `عدد السائقين: ${rows.length} · رحّلوا: ${transported} · لم يرحلوا: ${notTransported} · المتوسط: ${avg}/100`,
+            `تاريخ التصدير: ${new Date().toLocaleString("ar-EG")}`,
+          ];
+          const scoreRows = rows.map((r, i) => [
+            i + 1, r.name, r.code, r.company,
+            r.transported ? r.total : "لم يرحل",
+            r.judgeable ? `${r.onTime}/${r.judgeable}` : "—",
+            r.transferViol, r.otherViol,
+            r.transported ? r.timingScore : 0,
+            r.transported ? r.violationScore : 0,
+            r.score,
+          ]);
+          const sections: ReportSection[] = [
+            { heading: "درجات السائقين (من 100)", headers: ["#", "السائق", "الكود", "الشركة", "الرحلات", "داخل التوقيت", "مخالف خطة النقل", "باقي المخالفات", "التوقيت /30", "المخالفات /20", "الدرجة النهائية"], rows: scoreRows },
+            { heading: "النوافذ الزمنية المثالية", headers: ["الخط", "الاتجاه", "النوافذ"], rows: windowsRows },
+            { heading: "آلية الاحتساب", headers: ["البند", "الدرجة"], rows: [
+              ["لم يرحل إطلاقاً", "0"],
+              ["رحّل فعلاً (أساس)", String(DRIVER_SCORE.base)],
+              ["الالتزام بالتوقيت", `${DRIVER_SCORE.timing} × (رحلات داخل النافذة ÷ الرحلات المُقيّمة)`],
+              ["المخالفات", `${DRIVER_SCORE.violations} − (${DRIVER_SCORE.penaltyTransfer}×مخالف خطة النقل + ${DRIVER_SCORE.penaltyOther}×باقي المخالفات)`],
+            ] },
+          ];
+          return { title, meta, sections };
+        };
+        return (
+          <>
+            <div className="section-title" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>تقييم السائقين</h2>
+                <span>من 100 على الرحلات الفعلية: أساس الترحيل 50 + التوقيت 30 + المخالفات 20. من لم يرحل إطلاقاً = 0.</span>
+              </div>
+              <div className="row-actions" style={{ alignItems: "flex-end" }}>
+                <label className="field"><span>التاريخ</span><input type="date" value={day} onChange={(e) => setEvalDate(e.target.value)} /></label>
+                <label className="field"><span>بحث</span><input value={evalSearch} onChange={(e) => setEvalSearch(e.target.value)} placeholder="الاسم/الكود/الشركة" /></label>
+                <button className="secondary-btn" onClick={() => { const { title, meta, sections } = buildExport(); printReportSections(title, meta, sections); }}><Printer size={16} /> طباعة / PDF</button>
+                <button className="secondary-btn" onClick={() => { const { title, meta, sections } = buildExport(); downloadSectionsXls(`تقييم-السائقين-${day}.xls`, "تقييم السائقين", title, meta, sections); }}><FileSpreadsheet size={16} /> Excel</button>
+              </div>
+            </div>
+
+            <div className="stats-grid">
+              <div className="metric"><Users size={20} /><div><span>عدد السائقين</span><strong>{String(rows.length)}</strong><small className="muted">لديهم حساب مستخدم</small></div></div>
+              <div className="metric"><BusFront size={20} /><div><span>رحّلوا فعلاً</span><strong>{String(transported)}</strong><small className="muted">لم يرحلوا: {String(notTransported)} (درجة 0)</small></div></div>
+              <div className="metric"><ClipboardList size={20} /><div><span>متوسط التقييم</span><strong>{String(avg)}</strong><small className="muted">من 100</small></div></div>
+              <div className="metric"><AlertTriangle size={20} /><div><span>مخالفو خطة النقل</span><strong>{String(totalTransfer)}</strong><small className="muted">الأكثر أثراً على الدرجة</small></div></div>
+            </div>
+
+            <div className="table-card">
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr><th>#</th><th>السائق</th><th>الكود</th><th>الشركة</th><th>الرحلات</th><th>داخل التوقيت</th><th>مخالف خطة النقل</th><th>باقي المخالفات</th><th>التوقيت /30</th><th>المخالفات /20</th><th>الدرجة /100</th></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={r.id}>
+                        <td>{i + 1}</td>
+                        <td><strong>{r.name}</strong><small className="muted">{r.username}</small></td>
+                        <td>{r.code}</td>
+                        <td>{r.company}</td>
+                        <td>{r.transported ? r.total : <span className="status status-planned">لم يرحل</span>}</td>
+                        <td>{r.judgeable ? `${r.onTime}/${r.judgeable}` : "—"}</td>
+                        <td>{r.transferViol || "—"}</td>
+                        <td>{r.otherViol || "—"}</td>
+                        <td>{r.transported ? r.timingScore : 0}</td>
+                        <td>{r.transported ? r.violationScore : 0}</td>
+                        <td><span className={`status ${scoreClass(r.score)}`}>{r.score}</span></td>
+                      </tr>
+                    ))}
+                    {!rows.length && (
+                      <tr><td colSpan={11} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>لا يوجد سائقون مطابقون.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="ov-two">
+              <div className="table-card ov-card">
+                <div className="ov-card-title">النوافذ الزمنية المثالية<small>الرحلة داخل النافذة = درجة كاملة للتوقيت</small></div>
+                <div className="table-scroll">
+                  <table className="ov-mini">
+                    <thead><tr><th>الخط</th><th>الاتجاه</th><th>النوافذ</th></tr></thead>
+                    <tbody>
+                      {windowsRows.map((w, i) => (
+                        <tr key={i}><td className="ov-line">{w[0]}</td><td>{w[1]}</td><td>{w[2]}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-card ov-card">
+                <div className="ov-card-title">آلية الاحتساب<small>المجموع من 100</small></div>
+                <div className="table-scroll">
+                  <table className="ov-mini">
+                    <thead><tr><th>البند</th><th>الدرجة</th></tr></thead>
+                    <tbody>
+                      <tr><td className="ov-line">لم يرحل إطلاقاً</td><td>0</td></tr>
+                      <tr><td className="ov-line">رحّل فعلاً (أساس)</td><td>{DRIVER_SCORE.base}</td></tr>
+                      <tr><td className="ov-line">الالتزام بالتوقيت</td><td>{DRIVER_SCORE.timing} × (داخل النافذة ÷ الرحلات المُقيّمة)</td></tr>
+                      <tr><td className="ov-line">المخالفات</td><td>{DRIVER_SCORE.violations} − ({DRIVER_SCORE.penaltyTransfer}×مخالف خطة النقل + {DRIVER_SCORE.penaltyOther}×باقي المخالفات)</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="ov-legend">
+              يُقيّم فقط سائقون لديهم حساب مستخدم. «لم يرحل» = لا توجد رحلة في النظام لهذا اليوم. التوقيت يُقاس على رحلات الحديدة والصليف الفعلية.
+            </div>
           </>
         );
       })()}

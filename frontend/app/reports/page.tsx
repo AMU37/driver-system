@@ -2,6 +2,8 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import AnalyticsCharts from "@/components/AnalyticsCharts";
+import TripsOverview from "@/components/TripsOverview";
+import TripsBreakdown from "@/components/TripsBreakdown";
 import { getAdminTripReports, getNewEmployees } from "@/lib/api";
 import { useAuthGuard } from "@/lib/authGuard";
 import {
@@ -95,6 +97,9 @@ export default function ReportsPage() {
           <button className="secondary-btn" onClick={load} disabled={loading}><RefreshCw size={16} /> {loading ? "جارٍ التحديث..." : "تحديث"}</button>
         </div>
       </div>
+
+      <TripsOverview reports={reports} />
+
       {error && <div className="alert danger">{error}</div>}
       {msg && <div className="alert success">{msg}</div>}
 
@@ -104,6 +109,8 @@ export default function ReportsPage() {
         <div className="metric"><Users size={20} /><div><span>ركّاب غير موظفين</span><strong>{totals.nonEmployees}</strong></div></div>
         <div className="metric"><UserCheck size={20} /><div><span>طلبات موظفين جدّد</span><strong>{totals.newRequests}</strong></div></div>
       </div>
+
+      <TripsBreakdown reports={reports} onRefresh={load} />
 
       <AnalyticsCharts reports={reports} onRefresh={load} />
 

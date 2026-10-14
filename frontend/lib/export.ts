@@ -503,3 +503,86 @@ export function openWhatsAppText(text: string) {
 export function downloadTable(sheetName: string, filename: string, headers: string[], rows: Array<Array<string | number>>) {
   downloadContent(filename, tableToXlsText(sheetName, headers, rows), "application/vnd.ms-excel");
 }
+
+/* ---- تقارير متعددة الأقسام (تصدير/طباعة منسّق ملوّن) ---- */
+
+export type ReportSection = { heading?: string; headers: string[]; rows: Array<Array<string | number>> };
+
+const SECTION_REPORT_CSS = `
+ body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
+ h1{font-size:20px;margin:0 0 6px;padding-inline-start:10px;border-inline-start:5px solid #1769e0;color:#0f2b52}
+ .meta{color:#55606e;font-size:13px;margin-bottom:4px}
+ h2{font-size:15px;margin:18px 0 6px;color:#0f2b52;padding-inline-start:8px;border-inline-start:4px solid #9cc0f5}
+ table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+ th,td{border:1px solid #cfd6dd;padding:6px 8px;text-align:right}
+ th{background:#1769e0;color:#fff;font-weight:700;border-color:#1769e0}
+ tbody tr.zebra td{background:#f4f7fb}
+ td.t-good{background:#e8f6ef;color:#0b7c54;font-weight:700}
+ td.t-bad{background:#fff0f2;color:#c02b41;font-weight:700}
+ td.t-warn{background:#fff7e4;color:#a26900;font-weight:700}
+ td.t-info{background:#eaf2ff;color:#1769e0;font-weight:700}
+ thead{display:table-header-group}
+ tr{page-break-inside:avoid}
+ @media print{body{margin:10mm}}
+`;
+
+/** طباعة/حفظ PDF لتقرير من عدّة جداول مع عنوان وبيانات تعريفية ملوّنة. */
+export function printReportSections(title: string, meta: string[], sections: ReportSection[]): boolean {
+  const blocks = sections
+    .map((s) => {
+      const head = s.headers.map((h) => `<th>${esc(h)}</th>`).join("");
+      const body = s.rows
+        .map((r, ri) => {
+          const tds = r
+            .map((c) => {
+              const tone = toneOf(c);
+              return `<td${tone ? ` class="t-${tone}"` : ""}>${esc(c)}</td>`;
+            })
+            .join("");
+          return `<tr class="${ri % 2 ? "zebra" : ""}">${tds}</tr>`;
+        })
+        .join("");
+      const heading = s.heading ? `<h2>${esc(s.heading)}</h2>` : "";
+      const empty = `<tr><td colspan="${s.headers.length}" style="text-align:center;color:#6d7a8a">لا توجد بيانات</td></tr>`;
+      return `${heading}<table><thead><tr>${head}</tr></thead><tbody>${body || empty}</tbody></table>`;
+    })
+    .join("");
+  const metaHtml = meta.filter(Boolean).map((l) => `<div class="meta">${esc(l)}</div>`).join("");
+  const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>${SECTION_REPORT_CSS}</style></head><body>
+<h1>${esc(title)}</h1>${metaHtml}
+${blocks}
+</body></html>`;
+  return printReport(title, html);
+}
+
+/** تصدير Excel (SpreadsheetML) لتقرير من عدّة أقسام مع عنوان وبيانات تعريفية ملوّنة. */
+export function downloadSectionsXls(
+  filename: string,
+  sheetName: string,
+  title: string,
+  meta: string[],
+  sections: ReportSection[],
+): void {
+  const lines = [xlsHeader(), xlsStyles(), `<Worksheet ss:Name="${esc(sheetName)}">`, "<Table>"];
+  lines.push(rs([{ v: title, s: "hdr" }]));
+  for (const m of meta) if (m) lines.push(rs([{ v: m }]));
+  for (const s of sections) {
+    lines.push(rs([{ v: "" }]));
+    if (s.heading) lines.push(rs([{ v: s.heading, s: "hdr" }]));
+    lines.push(rs(s.headers.map((h) => ({ v: h, s: "hdr" }))));
+    for (const r of s.rows) {
+      lines.push(
+        rs(
+          r.map((c) =>
+            typeof c === "number"
+              ? { v: String(c), t: "Number" as const }
+              : { v: String(c ?? ""), s: toneOf(c) ?? undefined },
+          ),
+        ),
+      );
+    }
+  }
+  lines.push("</Table>", "</Worksheet>", "</Workbook>");
+  downloadContent(filename, lines.join("\r\n"), "application/vnd.ms-excel");
+}

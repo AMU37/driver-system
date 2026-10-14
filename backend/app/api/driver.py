@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_roles
@@ -197,17 +197,32 @@ def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRo
         existing.status = TripStatus.completed
         existing.completed_at = existing.completed_at or datetime.now(timezone.utc)
     employees = data.get("employees") or []
-    # منع التكرار: نفس السائق ونفس الرحلة مع نفس وقت الإكمال يُرسلان مرة واحدة فقط،
-    # ولو تكررت المحاولة (دفع تلقائي + زر مزامنة) نعيد التقرير الموجود دون نسخة إضافية.
+    # منع التكرار: نفس السائق ونفس الرحلة (نفس رقم الرحلة ووقت الإكمال/البدء) تُرسل
+    # مرة واحدة فقط. نأخذ قفلاً على مستوى قاعدة البيانات (Postgres) حتى لا يتزامن
+    # طلبان لنفس الرحلة فيمرّان معاً من الفحص ويُنشئان تقريرين — وهو ما حدث فعلاً
+    # حين أرسل الجهاز الطلب مرتين في نفس اللحظة. القفل يُحرَّر تلقائياً عند commit.
+    trip_key = str(data.get("trip_id") or data.get("internal_id") or "UNKNOWN")
     completed_at = data.get("completed_at")
-    if completed_at:
-        dup = db.scalar(
-            select(TripReport).where(
-                TripReport.driver_username == user.username,
-                TripReport.trip_number == (data.get("trip_id") or data.get("internal_id") or "UNKNOWN"),
-            ).order_by(TripReport.received_at.desc())
-        )
-        if dup and (dup.payload.get("trip") or {}).get("completed_at") == completed_at:
+    started_at = data.get("started_at")
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        lock_key = f"trip-report:{user.username}:{trip_key}"
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": lock_key})
+    dup = db.scalar(
+        select(TripReport).where(
+            TripReport.driver_username == user.username,
+            TripReport.trip_number == trip_key,
+        ).order_by(TripReport.received_at.desc())
+    )
+    if dup is not None:
+        stored = dup.payload.get("trip") or {}
+        # نفس وقت الإكمال، أو (عند غيابه) نفس وقت البدء، أو نفس رقم الرحلة بلا أوقات = مكرر.
+        same = bool(completed_at and stored.get("completed_at") == completed_at)
+        if not same and not completed_at and started_at:
+            same = stored.get("started_at") == started_at
+        if not same and not completed_at and not started_at:
+            same = True
+        if same:
             db.commit()
             return {"ok": True, "report_id": dup.id, "duplicate": True, "message": "التقرير موجود مسبقاً"}
     report = TripReport(

@@ -176,6 +176,7 @@ export async function importEmployeesFile(file: File) {
 }
 export function getNewEmployees() { return request<any[]>("/api/admin/new-employees"); }
 export function getAdminTripReports() { return request<any[]>("/api/admin/trip-reports"); }
+export function deleteAdminTripReport(id: number | string) { return request<any>(`/api/admin/trip-reports/${id}`, { method: "DELETE" }); }
 export function reviewNewEmployee(id: number, status: "approved" | "rejected") { return request<any>(`/api/admin/new-employees/${id}/review`, { method: "POST", body: JSON.stringify({ status }) }); }
 
 export function updateDriver(id: string, payload: any) { return request<any>(`/api/admin/drivers/${id}`, { method: "PUT", body: JSON.stringify(payload) }); }
