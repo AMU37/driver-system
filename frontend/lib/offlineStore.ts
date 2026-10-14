@@ -99,7 +99,7 @@ export type LocalTrip = {
   synced_at?: string | null;
   last_error?: string | null;
 };
-export type OfflineUser = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string };
+export type OfflineUser = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string; permissions?: Record<string, boolean> | null };
 export type AppConfig = { power_automate_url: string; power_automate_key: string; server_url?: string; last_sync_at?: string | null };
 
 const KEY_SESSION = "ds_session";
@@ -905,26 +905,9 @@ export function updatePassengerInTrip(
   const passenger = trip.passengers.find((p) => p.client_uuid === clientUuid);
   if (!passenger) return { trip, duplicated: false };
 
-  if (passenger.source === "non_employee") {
-    if (patch.name !== undefined) passenger.name = patch.name.trim();
-    if (patch.coming_from !== undefined) {
-      passenger.coming_from = patch.coming_from.trim() || null;
-      passenger.company = passenger.coming_from;
-    }
-    if (patch.summoned_department !== undefined) {
-      passenger.summoned_department = patch.summoned_department.trim() || null;
-      passenger.department = passenger.summoned_department;
-    }
-    if (patch.company !== undefined && patch.coming_from === undefined) {
-      passenger.coming_from = patch.company.trim() || null;
-      passenger.company = passenger.coming_from;
-    }
-    if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose || "work";
-    persistTrips(list);
-    return { trip, duplicated: false };
-  }
-
-  if (patch.employee_code !== undefined) {
+  // 1) مطابقة الكود مع كشف الموظفين (لكل راكب ليس «غير موظف» صِرف)
+  let upgradedToMaster = false;
+  if (patch.employee_code !== undefined && passenger.source !== "non_employee") {
     const code = patch.employee_code.trim();
     if (code) {
       const duplicated = trip.passengers.some((p) => p.client_uuid !== clientUuid && p.employee_code === code);
@@ -937,22 +920,39 @@ export function updatePassengerInTrip(
         passenger.department = emp.department_name;
         passenger.company = emp.company_name;
         passenger.housing_location = emp.housing_location;
+        passenger.coming_from = null;
+        passenger.summoned_department = null;
         passenger.source = "employee_master";
         passenger.needs_review = false;
-      } else {
-        passenger.name = (patch.name ?? passenger.name ?? "").trim();
-        passenger.job_title = null;
-        passenger.department = null;
-        passenger.company = null;
-        passenger.housing_location = null;
+        upgradedToMaster = true;
+      } else if (passenger.source === "employee_master") {
         passenger.source = "code_only";
         passenger.needs_review = true;
       }
+    } else if (passenger.source === "employee_master") {
+      passenger.employee_code = "";
+      passenger.source = "code_only";
+      passenger.needs_review = true;
     }
-  } else if (patch.name !== undefined) {
-    passenger.name = patch.name.trim();
   }
-  if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose;
+
+  // 2) بيانات غير الموظف (الاسم/الجهة القادم منها/الجهة المستدعية) تُطبّق على كل من ليس موظفاً في الكشف
+  if (patch.name !== undefined && !upgradedToMaster) passenger.name = patch.name.trim();
+  if (passenger.source !== "employee_master") {
+    if (patch.coming_from !== undefined) {
+      passenger.coming_from = patch.coming_from.trim() || null;
+      passenger.company = passenger.coming_from;
+    } else if (patch.company !== undefined) {
+      passenger.coming_from = patch.company.trim() || null;
+      passenger.company = passenger.coming_from;
+    }
+    if (patch.summoned_department !== undefined) {
+      passenger.summoned_department = patch.summoned_department.trim() || null;
+      passenger.department = passenger.summoned_department;
+    }
+  }
+  if (patch.visit_purpose !== undefined) passenger.visit_purpose = patch.visit_purpose || "work";
+
   persistTrips(list);
   return { trip, duplicated: false };
 }

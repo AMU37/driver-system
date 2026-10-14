@@ -51,6 +51,32 @@ export function matchesTripDirection(status: CycleStatus, direction: "arriving" 
   return status === direction || status === "daily";
 }
 
+/**
+ * مواقع سكن قريبة من الشركة: تُنقل يومياً (قادم ومغادر) في أيام العمل بكافة أنواع الدوام،
+ * بصرف النظر عن دورية الموظف (6/1، 5/2، 20/10…).
+ */
+export const NEARBY_DAILY_HOUSINGS: string[] = ["الصليف", "الولي", "الضبرة", "الزحيفي"];
+
+/** تبسيط نصي عربي للمقارنة (إزالة المسافات والتشكيل وتوحيد الألف/التاء/الياء). */
+function normalizeArabic(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\s+/g, "")
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+}
+
+/** هل يقع سكن الموظف في إحدى المواقع القريبة (تُنقل بشكل يومي)؟ */
+export function isNearbyHousing(housing: unknown): boolean {
+  const h = normalizeArabic(housing);
+  if (!h) return false;
+  return NEARBY_DAILY_HOUSINGS.some((name) => {
+    const n = normalizeArabic(name);
+    return !!n && h.includes(n);
+  });
+}
+
 function dayIndexFromParts(y: number, m: number, d: number): number {
   return Math.round(Date.UTC(y, m - 1, d) / DAY_MS);
 }
@@ -124,9 +150,15 @@ export function computeCycle(
 
 /** حالة دورة موظف (من سجل الموظف المستورد) على تاريخ معيّن. */
 export function employeeCycle(
-  employee: { first_work_day?: string | null; work_days?: unknown; rest_days?: unknown } | null | undefined,
+  employee: { first_work_day?: string | null; work_days?: unknown; rest_days?: unknown; housing_location?: string | null } | null | undefined,
   targetDate: string | Date,
 ): CycleInfo | null {
   if (!employee) return null;
-  return computeCycle(employee.first_work_day, employee.work_days, employee.rest_days, targetDate);
+  const base = computeCycle(employee.first_work_day, employee.work_days, employee.rest_days, targetDate);
+  if (!base) return null;
+  // سكان المواقع القريبة: في أيام عملهم تُعامل حالتهم «نقل يومي» (قادم ومغادر) بكافة أنواع الدوام.
+  if (base.isWorkDay && base.status !== "daily" && isNearbyHousing(employee.housing_location)) {
+    return { ...base, status: "daily", label: "نقل يومي", badge: META.daily.badge };
+  }
+  return base;
 }

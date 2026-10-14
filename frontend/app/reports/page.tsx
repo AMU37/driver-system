@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
+import AnalyticsCharts from "@/components/AnalyticsCharts";
 import { getAdminTripReports, getNewEmployees } from "@/lib/api";
 import { useAuthGuard } from "@/lib/authGuard";
 import {
@@ -103,6 +104,8 @@ export default function ReportsPage() {
         <div className="metric"><Users size={20} /><div><span>ركّاب غير موظفين</span><strong>{totals.nonEmployees}</strong></div></div>
         <div className="metric"><UserCheck size={20} /><div><span>طلبات موظفين جدّد</span><strong>{totals.newRequests}</strong></div></div>
       </div>
+
+      <AnalyticsCharts reports={reports} onRefresh={load} />
 
       <section className="section">
         <div className="section-title">

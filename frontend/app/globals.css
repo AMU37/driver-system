@@ -30,6 +30,9 @@ table{min-width:0}
 .empty-actions{margin-top:18px;display:flex;justify-content:center}
 .admin-tabs{overflow-x:auto;scrollbar-width:thin}
 .admin-tabs button{white-space:nowrap}
+.admin-subtabs{display:flex;gap:6px;margin:-4px 0 15px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px}
+.admin-subtabs button{white-space:nowrap;background:#f2f5f9;color:#5f6d7e;padding:7px 12px;border-radius:999px;font-size:12.5px;font-weight:600;border:1px solid transparent}
+.admin-subtabs button.active{background:#eaf2ff;color:var(--primary);border-color:#cfe0fb;font-weight:800}
 .share-btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
 .panel-title{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .modal{display:flex;flex-direction:column;max-height:92vh}
@@ -57,3 +60,18 @@ table{min-width:0}
 .perm-badges{display:flex;flex-wrap:wrap;gap:4px}
 .perm-badge{font-size:11px;padding:2px 7px;border-radius:999px;background:#eef4ff;color:var(--primary);font-weight:700}
 .perm-badge.off{background:#f1f3f6;color:#9aa4b1}
+.chart-card{background:#fff;border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow);padding:16px}
+.chart-wrap{width:100%}
+.chart-svg{width:100%;height:auto;display:block;overflow:visible}
+.chart-scroll{overflow-x:auto}
+.chart-scroll .chart-svg{min-width:100%}
+.chart-legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;color:#5b6775;font-size:12px}
+.chart-legend span{display:flex;align-items:center;gap:6px}
+.chart-legend i{width:14px;height:4px;border-radius:2px;display:inline-block}
+.chart-legend i.dashed{background:repeating-linear-gradient(90deg,#e6a700 0 5px,transparent 5px 9px)}
+.chart-empty{padding:36px;text-align:center;color:var(--muted);font-size:13px}
+.metric small{display:block;margin-top:3px;font-size:11px}
+.metric small.delta{font-weight:700}
+.delta.up{color:var(--success)}
+.delta.down{color:var(--danger)}
+@media(max-width:760px){.chart-card{padding:10px}}

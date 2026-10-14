@@ -1,5 +1,5 @@
 ﻿"use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "@/components/AppShell";
 import CrudTable, { type CrudColumn, type CrudField } from "@/components/CrudTable";
 import StatusBadge from "@/components/StatusBadge";
@@ -18,7 +18,8 @@ import { currentUser, useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot, type TripType } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, downloadTable, openReportTripWhatsApp, openWhatsAppText, printTableReport, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText } from "@/lib/export";
-import { employeeCycle, matchesTripDirection, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
+import { employeeCycle, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
+import { effectivePermissions } from "@/lib/permissions";
 
 type Tab = "plans" | "planner" | "daily" | "actual" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare";
 
@@ -79,6 +80,47 @@ function boardedCodesForDate(reports: any[], dateValue: string): Set<string> {
   return codes;
 }
 
+/**
+ * أول رحلة صعد فيها كل موظف في اليوم (منفصلة لكل اتجاه قادم/مغادر).
+ * المفتاح: `${الكود}|arriving|departing`، والقيمة: رقم أول رحلة.
+ * يُستعمل لكشف التسجيل المكرر: أي ظهور لاحق لنفس الموظف بنفس الاتجاه في رحلة أخرى = تسجيل سابق.
+ */
+function dayFirstBoardedTrip(reports: any[], dateValue: string): Map<string, string> {
+  const target = toDayIndex(dateValue);
+  const first = new Map<string, string>();
+  if (target === null) return first;
+  const day = reports
+    .filter((r) => {
+      const raw = reportTripDateRaw(r);
+      return raw !== null && toDayIndex(raw) === target;
+    })
+    .sort((a, b) => {
+      const ta = reportTripDateRaw(a) || "";
+      const tb = reportTripDateRaw(b) || "";
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+  for (const r of day) {
+    const type = reportTypeOf(r);
+    if (type !== "قادم" && type !== "مغادر") continue;
+    const dir = type === "قادم" ? "arriving" : "departing";
+    const tripNo = String(r.trip_number || r.raw?.trip?.trip_id || "—").trim() || "؟";
+    const { employees } = reportTripOf(r);
+    for (const p of employees) {
+      const code = p?.employee_code ? String(p.employee_code).trim() : "";
+      if (!code) continue;
+      const key = `${code}|${dir}`;
+      if (!first.has(key)) first.set(key, tripNo);
+    }
+  }
+  return first;
+}
+
+/** رقم أول رحلة صعد فيها الموظف بهذا الاتجاه في اليوم — أو null إن لم يوجد. */
+function previousBoardedTrip(firstMap: Map<string, string>, code: string, want: "arriving" | "departing"): string | null {
+  const firstTrip = firstMap.get(`${String(code).trim()}|${want}`);
+  return firstTrip ?? null;
+}
+
 /** نوع حركة التقرير (قادم/مغادر) من الحقل العلوي أو داخل الرحلة. */
 function reportTypeOf(report: any): TripType {
   const { trip } = reportTripOf(report);
@@ -109,6 +151,10 @@ export type ActualRow = {
   boardedAt: string;
   source: string;
   status: "match" | "violation" | "unknown" | "nonemp";
+  /** ملاحظة توضيحية للحالة (مثل: «تم تسجيله في رحلة سابقة»). */
+  note: string;
+  /** سُجّل الموظف في أكثر من رحلة بنفس الاتجاه في نفس اليوم. */
+  duplicate: boolean;
   cycle: CycleInfo | null;
 };
 
@@ -117,22 +163,46 @@ function actualRowsForDate(reports: any[], dateValue: string, employees: any[]):
   const rows: ActualRow[] = [];
   const byCode = new Map<string, any>();
   for (const e of employees) byCode.set(String(e.employee_code), e);
-  for (const r of reportsForDate(reports, dateValue)) {
+  const firstBoarded = dayFirstBoardedTrip(reports, dateValue);
+  const dayReports = reportsForDate(reports, dateValue).sort((a, b) => {
+    const ta = reportTripDateRaw(a) || "";
+    const tb = reportTripDateRaw(b) || "";
+    return ta < tb ? -1 : ta > tb ? 1 : 0;
+  });
+  for (const r of dayReports) {
     const { trip, employees: passengers } = reportTripOf(r);
     const type = reportTypeOf(r);
     const bus = String(trip.bus_number || "—");
     const route = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || r.route || "—");
     const driver = r.driver_name || r.driver_username || "—";
-    const tripNumber = r.trip_number || trip.trip_id || "—";
+    const tripNumber = String(r.trip_number || trip.trip_id || "—").trim() || "؟";
     const want: "arriving" | "departing" = type === "قادم" ? "arriving" : "departing";
     for (const p of passengers) {
-      const code = p.employee_code ? String(p.employee_code) : "";
+      const code = p.employee_code ? String(p.employee_code).trim() : "";
       const emp = code ? byCode.get(code) || null : null;
       const cycle = emp ? employeeCycle(emp, dateValue) : null;
       let status: ActualRow["status"];
       if (p.source === "non_employee") status = "nonemp";
       else if (!emp || !cycle) status = "unknown";
-      else status = matchesTripDirection(cycle.status, want) ? "match" : "violation";
+      else status = cycle.isWorkDay ? "match" : "violation";
+      let note = "";
+      let duplicate = false;
+      if (code && (type === "قادم" || type === "مغادر")) {
+        const firstTrip = previousBoardedTrip(firstBoarded, code, want);
+        duplicate = firstTrip !== null && firstTrip !== tripNumber;
+        if (duplicate) {
+          status = "violation";
+          note = `تم تسجيله في رحلة سابقة (رحلة ${firstTrip})`;
+          if (!emp || !cycle) note += " · غير مسجّل في الكشف";
+        }
+      }
+      if (!note && status === "violation") {
+        const st = cycle?.status;
+        note = st === "transport_arrange"
+          ? "مخالف — صعد في يوم ترتيب مواصلات"
+          : "مخالف النقل في الراحة (إجازة)";
+      } else if (!note && status === "unknown") note = "غير مسجّل في الكشف";
+      else if (!note && status === "nonemp") note = "غير موظف";
       rows.push({
         code,
         name: p.name || emp?.name || "—",
@@ -147,6 +217,8 @@ function actualRowsForDate(reports: any[], dateValue: string, employees: any[]):
         boardedAt: p.boarded_at || "",
         source: p.source || "",
         status,
+        note,
+        duplicate,
         cycle,
       });
     }
@@ -168,6 +240,7 @@ export const tripTypeLabel = (value?: string | null) => {
 export default function AdminPage() {
   const me = useAuthGuard(["admin", "supervisor"]);
   const isAdminUser = me?.role === "admin";
+  const perms = effectivePermissions(me);
   const [tab, setTab] = useState<Tab>("plans");
   const [drivers, setDrivers] = useState<User[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -213,7 +286,13 @@ export default function AdminPage() {
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [empSearch, setEmpSearch] = useState("");
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [empFilterDept, setEmpFilterDept] = useState<string[]>([]);
+  const [empFilterHousing, setEmpFilterHousing] = useState<string[]>([]);
+  const [empFilterCompany, setEmpFilterCompany] = useState<string[]>([]);
+  const [empFilterService, setEmpFilterService] = useState<string[]>([]);
+  const [empFilterTransport, setEmpFilterTransport] = useState<string[]>([]);
+  const [empFilterSchedule, setEmpFilterSchedule] = useState<string[]>([]);
+  const [empFilterStatus, setEmpFilterStatus] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const backupRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<any>({ driver_code: "", bus_number: "", route_name: "", origin: "", destination: "", scheduled_start_at: "", trip_type: "مغادر" });
@@ -225,18 +304,46 @@ export default function AdminPage() {
   const companyNameOptions = companies.map(c => ({ value: c.name, label: `${c.name} (${c.code})` }));
   const housingNameOptions = housing.map(h => ({ value: h.name, label: h.name }));
 
-  async function loadEmployees(search?: string) {
-    try {
-      const result = await getAdminEmployees(search);
-      setEmployees(result ?? []);
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : "تعذر تحميل الموظفين");
-    }
-  }
+  // قوائم منسدلة من بيانات النظام (القوائم المرجعية + القيم المستخدمة فعلاً في كشف الموظفين)
+  const empOptionSource = allEmployees.length ? allEmployees : employees;
+  const uniqueFieldOptions = (key: string, extra: string[] = []) => {
+    const set = new Set<string>(extra.map(v => v.trim()).filter(Boolean));
+    for (const e of empOptionSource) { const v = String(e?.[key] ?? "").trim(); if (v) set.add(v); }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "ar")).map(v => ({ value: v, label: v }));
+  };
+  const jobTitleOptions = uniqueFieldOptions("job_title", jobs.map(j => String(j.title ?? "").trim()));
+  const departmentNameOptions = uniqueFieldOptions("department_name", departments.map(d => String(d.name ?? "").trim()));
+  const empWorkScheduleOptions = uniqueFieldOptions("work_schedule");
+  const empScheduleDescOptions = uniqueFieldOptions("schedule_desc");
+  const empRotationStatusOptions = uniqueFieldOptions("rotation_status", ["مداوم", "إجازة", "ترتيب مواصلات"]);
+  const empGenderOptions = uniqueFieldOptions("gender", ["ذكر", "أنثى"]);
+  const empServiceTypeOptions = uniqueFieldOptions("service_type", ["نقل", "سكن", "نقل-سكن", "أخرى", "فروع"]);
+  const empTransportTypeOptions = uniqueFieldOptions("transport_type", ["نقل يومي", "نقل دوري"]);
+  const empBaseStatusOptions = uniqueFieldOptions("base_status_today", ["مداوم", "إجازة", "ترتيب مواصلات"]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = empSearch.trim().toLowerCase();
+    const inc = (list: string[], v: any) => list.length === 0 || list.includes(String(v ?? "").trim());
+    return empOptionSource.filter((e) => {
+      if (q) {
+        const hay = [e.employee_code, e.name, e.job_title, e.department_name, e.company_name, e.housing_location, e.service_type, e.transport_type]
+          .map((v) => String(v ?? "").toLowerCase());
+        if (!hay.some((h) => h.includes(q))) return false;
+      }
+      if (!inc(empFilterDept, e.department_name)) return false;
+      if (!inc(empFilterHousing, e.housing_location)) return false;
+      if (!inc(empFilterCompany, e.company_name)) return false;
+      if (!inc(empFilterService, e.service_type)) return false;
+      if (!inc(empFilterTransport, e.transport_type)) return false;
+      if (!inc(empFilterSchedule, e.work_schedule)) return false;
+      if (empFilterStatus === "active" && e.is_active === false) return false;
+      if (empFilterStatus === "inactive" && e.is_active !== false) return false;
+      return true;
+    });
+  }, [empOptionSource, empSearch, empFilterDept, empFilterHousing, empFilterCompany, empFilterService, empFilterTransport, empFilterSchedule, empFilterStatus]);
+
   function onEmpSearch(query: string) {
     setEmpSearch(query);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { loadEmployees(query.trim() || ""); }, 350);
   }
   async function load(silent = false) {
     const results = await Promise.allSettled([
@@ -737,22 +844,22 @@ export default function AdminPage() {
   const employeeFields: CrudField[] = [
     { key: "employee_code", label: "كود الموظف", required: true },
     { key: "name", label: "الاسم", required: true },
-    { key: "job_title", label: "المسمى الوظيفي" },
-    { key: "department_name", label: "الإدارة" },
+    { key: "job_title", label: "المسمى الوظيفي", type: "select", options: jobTitleOptions },
+    { key: "department_name", label: "الإدارة", type: "select", options: departmentNameOptions },
     { key: "company_name", label: "الشركة", type: "select", options: companyNameOptions },
     { key: "housing_location", label: "السكن", type: "select", options: housingNameOptions },
-    { key: "work_schedule", label: "جدول العمل" },
-    { key: "schedule_desc", label: "شرح نوع الدوام" },
+    { key: "work_schedule", label: "جدول العمل (نوع الدوام)", type: "select", options: empWorkScheduleOptions },
+    { key: "schedule_desc", label: "شرح نوع الدوام", type: "select", options: empScheduleDescOptions },
     { key: "work_days", label: "عدد أيام العمل", type: "number" },
     { key: "rest_days", label: "عدد أيام الراحة", type: "number" },
-    { key: "first_work_day", label: "تاريخ أول يوم عمل" },
-    { key: "rotation_status", label: "الحالة الدورية للموظف" },
-    { key: "departure_time", label: "وقت المغادرة" },
-    { key: "gender", label: "نوع الجنس" },
-    { key: "service_type", label: "نوع الخدمة" },
-    { key: "transport_type", label: "تصنيف النقل (يومي/دوري)" },
+    { key: "first_work_day", label: "تاريخ أول يوم عمل", type: "date" },
+    { key: "rotation_status", label: "الحالة الدورية للموظف", type: "select", options: empRotationStatusOptions },
+    { key: "departure_time", label: "وقت المغادرة", type: "time" },
+    { key: "gender", label: "نوع الجنس", type: "select", options: empGenderOptions },
+    { key: "service_type", label: "نوع الخدمة", type: "select", options: empServiceTypeOptions },
+    { key: "transport_type", label: "تصنيف النقل (يومي/دوري)", type: "select", options: empTransportTypeOptions },
     { key: "cycle_day_today", label: "يوم الدورة اليوم", type: "number" },
-    { key: "base_status_today", label: "الحالة الأساسية اليوم" },
+    { key: "base_status_today", label: "الحالة الأساسية اليوم", type: "select", options: empBaseStatusOptions },
     { key: "cycle_day_tomorrow", label: "يوم الدورة غداً", type: "number" },
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
   ];
@@ -827,6 +934,18 @@ export default function AdminPage() {
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
   ];
 
+  if (!perms.view) {
+    return (
+      <AppShell>
+        <div className="form-panel" style={{ maxWidth: 560, margin: "60px auto", textAlign: "center", padding: 30 }}>
+          <div className="brand-mark" style={{ margin: "0 auto 15px" }}><AlertTriangle size={30} /></div>
+          <h2 style={{ margin: "0 0 6px" }}>لا تملك صلاحية عرض لوحة الإدارة</h2>
+          <p className="muted">جرّت صلاحية «العرض» من حسابك. تواصل مع مدير النظام لاستعادة الدخول.</p>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <div className="page-head">
@@ -857,12 +976,13 @@ export default function AdminPage() {
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button className="secondary-btn" onClick={exportBackup}><Download size={16} />تصدير نسخة</button>
-            <button className="secondary-btn" onClick={() => backupRef.current?.click()}><Upload size={16} />استيراد نسخة</button>
-            <input ref={backupRef} type="file" accept=".json" style={{ display: "none" }} onChange={e => e.target.files?.[0] && importBackup(e.target.files[0])} />
+            {perms.add && <button className="secondary-btn" onClick={() => backupRef.current?.click()}><Upload size={16} />استيراد نسخة</button>}
+            {perms.add && <input ref={backupRef} type="file" accept=".json" style={{ display: "none" }} onChange={e => e.target.files?.[0] && importBackup(e.target.files[0])} />}
           </div>
         </div>
       </div>
 
+      {perms.add && (
       <div className="form-panel">
         <div className="panel-title">
           <div>
@@ -887,25 +1007,57 @@ export default function AdminPage() {
         <button className="primary-btn" onClick={createTrip} disabled={loading || !form.scheduled_start_at || !form.driver_code || !form.bus_number || !form.route_name}><Plus size={18} />{loading ? "جارٍ الحفظ..." : "تخطيط الرحلة"}</button>
         </>)}
       </div>
+      )}
 
-      <div className="admin-tabs">
-        <button className={tab === "planner" ? "active" : ""} onClick={() => setTab("planner")}>تخطيط المواصلات</button>
-        <button className={tab === "plans" ? "active" : ""} onClick={() => setTab("plans")}>الرحلات المخططة ({plans.length})</button>
-        <button className={tab === "drivers" ? "active" : ""} onClick={() => setTab("drivers")}>السائقون ({drivers.length})</button>
-        <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}>المستخدمون ({users.length})</button>
-        <button className={tab === "employees" ? "active" : ""} onClick={() => setTab("employees")}>الموظفون ({employees.length})</button>
-        <button className={tab === "buses" ? "active" : ""} onClick={() => setTab("buses")}>الباصات ({buses.length})</button>
-        <button className={tab === "routes" ? "active" : ""} onClick={() => setTab("routes")}>الخطوط ({routes.length})</button>
-        <button className={tab === "companies" ? "active" : ""} onClick={() => setTab("companies")}>الشركات ({companies.length})</button>
-        <button className={tab === "departments" ? "active" : ""} onClick={() => setTab("departments")}>الإدارات ({departments.length})</button>
-        <button className={tab === "jobs" ? "active" : ""} onClick={() => setTab("jobs")}>الوظائف ({jobs.length})</button>
-        <button className={tab === "housing" ? "active" : ""} onClick={() => setTab("housing")}>السكن ({housing.length})</button>
-        <button className={tab === "new" ? "active" : ""} onClick={() => setTab("new")}>طلبات الموظفين الجدد ({newEmployees.length})</button>
-        <button className={tab === "trips" ? "active" : ""} onClick={() => setTab("trips")}>رحلات السائقين ({reports.length})</button>
-        <button className={tab === "daily" ? "active" : ""} onClick={() => setTab("daily")}>الخطة اليومية (تلقائي)</button>
-        <button className={tab === "actual" ? "active" : ""} onClick={() => setTab("actual")}>الموظفون الفعليون</button>
-        <button className={tab === "compare" ? "active" : ""} onClick={() => setTab("compare")}>المخطط مقابل الفعلي</button>
-      </div>
+      {(() => {
+        const tabGroups: { key: string; label: string; tabs: { key: Tab; label: string }[] }[] = [
+          { key: "operations", label: "الرحلات المخططة", tabs: [
+            { key: "planner", label: "تخطيط المواصلات" },
+            { key: "plans", label: `الرحلات المخططة (${plans.length})` },
+            { key: "daily", label: "الخطة اليومية (تلقائي)" },
+          ] },
+          { key: "actual", label: "الرحلات الفعلية", tabs: [
+            { key: "trips", label: `رحلات السائقين (${reports.length})` },
+            { key: "actual", label: "الموظفون الفعليون" },
+          ] },
+          { key: "reports", label: "المقارنات والتقارير", tabs: [
+            { key: "compare", label: "المخطط مقابل الفعلي" },
+          ] },
+          { key: "hr", label: "الموظفون", tabs: [
+            { key: "employees", label: `الموظفون (${employees.length})` },
+            { key: "new", label: `طلبات الموظفين الجدد (${newEmployees.length})` },
+            { key: "jobs", label: `الوظائف (${jobs.length})` },
+            { key: "departments", label: `الإدارات (${departments.length})` },
+            { key: "companies", label: `الشركات (${companies.length})` },
+            { key: "housing", label: `السكن (${housing.length})` },
+          ] },
+          { key: "fleet", label: "الأسطول والخطوط", tabs: [
+            { key: "buses", label: `الباصات (${buses.length})` },
+            { key: "routes", label: `الخطوط (${routes.length})` },
+          ] },
+          { key: "access", label: "المستخدمون والسائقون", tabs: [
+            { key: "drivers", label: `السائقون (${drivers.length})` },
+            { key: "users", label: `المستخدمون (${users.length})` },
+          ] },
+        ];
+        const activeGroup = tabGroups.find((g) => g.tabs.some((x) => x.key === tab)) ?? tabGroups[0];
+        return (
+          <>
+            <div className="admin-tabs">
+              {tabGroups.map((g) => (
+                <button key={g.key} className={activeGroup.key === g.key ? "active" : ""} onClick={() => setTab(g.tabs[0].key)}>{g.label}</button>
+              ))}
+            </div>
+            {activeGroup.tabs.length > 1 && (
+              <div className="admin-subtabs">
+                {activeGroup.tabs.map((x) => (
+                  <button key={x.key} className={tab === x.key ? "active" : ""} onClick={() => setTab(x.key)}>{x.label}</button>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {tab === "planner" && (() => {
         const dateValue = planDate || todayIso();
@@ -913,7 +1065,6 @@ export default function AdminPage() {
         const directionFilters = planStatus.filter((s) => s === "arriving" || s === "departing");
         const filterDir = directionFilters.length === 1 ? (directionFilters[0] === "departing" ? "مغادر" : "قادم") : "";
         const dirType = filterDir || pForm.trip_type || "قادم";
-        const wantStatus: "arriving" | "departing" = dirType === "مغادر" ? "departing" : "arriving";
 
         const housingCounts = new Map<string, number>();
         const scheduleCounts = new Map<string, number>();
@@ -954,7 +1105,7 @@ export default function AdminPage() {
 
         const selectedCodes = Object.keys(planSelected).filter((c) => planSelected[c]);
         const allSelected = rows.length > 0 && rows.every((x) => planSelected[String(x.e.employee_code)]);
-        const violating = rows.filter((x) => planSelected[String(x.e.employee_code)] && !matchesTripDirection(x.cycle.status, wantStatus));
+        const violating = rows.filter((x) => planSelected[String(x.e.employee_code)] && !x.cycle.isWorkDay);
         const statusCounts = new Map<string, number>();
         for (const x of rows) statusCounts.set(x.cycle.status, (statusCounts.get(x.cycle.status) || 0) + 1);
         const statusSummary = Array.from(statusCounts.entries()).map(([s, n]) => `${CYCLE_STATUS_OPTIONS.find(o => o.value === s)?.label ?? s} ${n}`).join(" · ") || "—";
@@ -964,7 +1115,7 @@ export default function AdminPage() {
         const destination = dirType === "مغادر" ? `من الشركة إلى ${housingLabel}` : `من ${housingLabel} إلى الشركة`;
         const plannerSubtitle = `التاريخ: ${dateValue} · الهدف: ${dirType} · الوجه: ${destination} · المعروضون: ${rows.length} · المحدَّدون: ${selectedCodes.length}`;
         const plannerHeaders = ["#", "الكود", "الاسم", "الإدارة", "الشركة", "السكن", "خط السير", "نظام الدوام", "حالة الدورة", "المغادرة", "المطابقة"];
-        const plannerExportRows = rows.map((x, i) => [i + 1, x.e.employee_code || "", x.e.name || "", x.e.department_name || "", x.e.company_name || "", x.e.housing_location || "", x.e.route_name || "", x.e.schedule_desc || x.e.work_schedule || "", x.cycle.label, x.e.departure_time || "", matchesTripDirection(x.cycle.status, wantStatus) ? "مطابق" : "مخالف"]);
+        const plannerExportRows = rows.map((x, i) => [i + 1, x.e.employee_code || "", x.e.name || "", x.e.department_name || "", x.e.company_name || "", x.e.housing_location || "", x.e.route_name || "", x.e.schedule_desc || x.e.work_schedule || "", x.cycle.label, x.e.departure_time || "", x.cycle.isWorkDay ? "مطابق" : "مخالف"]);
 
         const toggle = (code: string) => setPlanSelected((prev) => ({ ...prev, [code]: !prev[code] }));
         const toggleAll = () => setPlanSelected((prev) => {
@@ -1033,7 +1184,7 @@ export default function AdminPage() {
               {violating.length > 0 && (
                 <div className="alert danger" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <AlertTriangle size={18} />
-                  <span>تنبيه مخالفة: {violating.length} من المحددين حالتهم لا تطابق «{dirType}» في هذا التاريخ (صعود خارج الخطة). يمكنك المتابعة أو تعديل التحديد.</span>
+                  <span>تنبيه مخالفة: {violating.length} من المحددين في يوم راحة (إجازة/ترتيب مواصلات) — لا يحق لهم الصعود في هذا التاريخ. يمكنك المتابعة أو تعديل التحديد.</span>
                 </div>
               )}
               <button className="primary-btn" onClick={createPlanWithEmployees} disabled={loading || !pForm.driver_code || !pForm.bus_number || !pForm.route_name || !pForm.scheduled_start_at || !selectedCodes.length}>
@@ -1060,7 +1211,7 @@ export default function AdminPage() {
                   <tbody>
                     {rows.map((x, i) => {
                       const code = String(x.e.employee_code);
-                      const bad = !matchesTripDirection(x.cycle.status, wantStatus);
+                      const bad = !x.cycle.isWorkDay;
                       return (
                         <tr key={`${code}-${i}`}>
                           <td><input type="checkbox" checked={!!planSelected[code]} onChange={() => toggle(code)} /></td>
@@ -1129,6 +1280,7 @@ export default function AdminPage() {
         <CrudTable
           title="السائقون" subtitle="إضافة أو تعديل أو حذف حسابات السائقين."
           items={drivers} columns={driverColumns} fields={driverFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, i) => { await localSave("driver", p, i, async (pp, iid) => { if (iid !== undefined) await updateDriver(String(iid), pp); else await addDriver(pp); }, "السائق"); }}
           onDelete={async id => { await localRemove("driver", id, async (iid) => { const res = await deleteDriver(String(iid)); afterAction(res.deactivated ? "السائق له رحلات سابقة — تم تعطيله بدلاً من الحذف" : "تم حذف السائق"); }); }}
         />
@@ -1138,6 +1290,7 @@ export default function AdminPage() {
         <CrudTable
           title="المستخدمون" subtitle="جميع حسابات النظام (سائق/مشرف/أدمن/مستعرض) — إنشاء حساب وتعديل الدور متاحان للمدير."
           items={users} columns={userColumns} fields={userFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, i) => {
             if (i !== undefined) { await updateAdminUser(String(i), p); afterAction("تم حفظ المستخدم"); }
             else { await addAdminUser(p); afterAction("تم حفظ المستخدم"); }
@@ -1149,8 +1302,23 @@ export default function AdminPage() {
         />
       )}
 
-      {tab === "employees" && (
+      {tab === "employees" && (() => {
+        const empExportHeaders = ["#", "الكود", "الاسم", "المسمى الوظيفي", "الإدارة", "الشركة", "السكن", "جدول العمل", "شرح نوع الدوام", "أيام العمل", "أيام الراحة", "تاريخ أول يوم", "الحالة الدورية", "وقت المغادرة", "الجنس", "نوع الخدمة", "تصنيف النقل", "الحالة"];
+        const empExportRows = filteredEmployees.map((e: any, i: number) => [
+          i + 1, e.employee_code || "", e.name || "", e.job_title || "", e.department_name || "",
+          e.company_name || "", e.housing_location || "", e.work_schedule || "", e.schedule_desc || "",
+          e.work_days ?? "", e.rest_days ?? "", String(e.first_work_day || "").slice(0, 10),
+          e.rotation_status || "", String(e.departure_time || "").slice(0, 5), e.gender || "",
+          e.service_type || "", e.transport_type || "", YESNO(e.is_active),
+        ]);
+        const resetEmpFilters = () => {
+          setEmpFilterDept([]); setEmpFilterHousing([]); setEmpFilterCompany([]);
+          setEmpFilterService([]); setEmpFilterTransport([]); setEmpFilterSchedule([]); setEmpFilterStatus("");
+        };
+        const empSubtitle = `العدد: ${empExportRows.length}`;
+        return (
         <>
+          {perms.add && (
           <div className="form-panel import-panel">
             <div className="panel-title">
               <div>
@@ -1165,20 +1333,44 @@ export default function AdminPage() {
               <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={e => e.target.files?.[0] && uploadFile(e.target.files[0])} />
             </div>
           </div>
+          )}
+          <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+            <div className="field" style={{ minWidth: 170 }}><span>الإدارة</span><MultiSelect options={departmentNameOptions} value={empFilterDept} onChange={setEmpFilterDept} placeholder="كل الإدارات" /></div>
+            <div className="field" style={{ minWidth: 140 }}><span>السكن</span><MultiSelect options={housingNameOptions} value={empFilterHousing} onChange={setEmpFilterHousing} placeholder="كل الأماكن" /></div>
+            <div className="field" style={{ minWidth: 170 }}><span>الشركة</span><MultiSelect options={companyNameOptions} value={empFilterCompany} onChange={setEmpFilterCompany} placeholder="كل الشركات" /></div>
+            <div className="field" style={{ minWidth: 140 }}><span>نوع الخدمة</span><MultiSelect options={empServiceTypeOptions} value={empFilterService} onChange={setEmpFilterService} placeholder="كل الأنواع" /></div>
+            <div className="field" style={{ minWidth: 150 }}><span>تصنيف النقل</span><MultiSelect options={empTransportTypeOptions} value={empFilterTransport} onChange={setEmpFilterTransport} placeholder="الكل" /></div>
+            <div className="field" style={{ minWidth: 200 }}><span>نوع الدوام</span><MultiSelect options={empWorkScheduleOptions} value={empFilterSchedule} onChange={setEmpFilterSchedule} placeholder="كل الأنظمة" /></div>
+            <div className="field" style={{ minWidth: 120 }}><span>الحالة</span>
+              <select value={empFilterStatus} onChange={e => setEmpFilterStatus(e.target.value)}>
+                <option value="">الكل</option>
+                <option value="active">نشط</option>
+                <option value="inactive">معطّل</option>
+              </select>
+            </div>
+            <button className="secondary-btn" onClick={resetEmpFilters}><RefreshCw size={16} /> مسح الفلاتر</button>
+            <span style={{ flex: 1, minWidth: 16 }} />
+            <button className="secondary-btn" onClick={() => downloadTable("الموظفون", `الموظفون-${todayIso()}.xls`, empExportHeaders, empExportRows)}><FileSpreadsheet size={16} /> Excel</button>
+            <button className="secondary-btn" onClick={() => printTableReport("قائمة الموظفين", empSubtitle, empExportHeaders, empExportRows)}><Printer size={16} /> PDF</button>
+            <button className="secondary-btn" onClick={() => openWhatsAppText(tableToText("قائمة الموظفين", empSubtitle, empExportHeaders, empExportRows))}><MessageCircle size={16} /> واتساب</button>
+          </div>
           <CrudTable
-            title="الموظفون" subtitle="إضافة أو تعديل أو حذف سجلات الموظفين."
-            items={employees} columns={employeeColumns} fields={employeeFields}
+            title="الموظفون" subtitle={`إضافة أو تعديل أو حذف سجلات الموظفين — المعروض ${filteredEmployees.length} من ${empOptionSource.length}.`}
+            items={filteredEmployees} columns={employeeColumns} fields={employeeFields}
+            canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
             searchable searchValue={empSearch} onSearch={onEmpSearch}
             onSave={async (p, i) => { await localSave("employee", p, i, async (pp, iid) => { if (iid !== undefined) await updateEmployeeMaster(iid, pp); else await addEmployeeMaster(pp); }, "الموظف"); }}
             onDelete={async id => { await localRemove("employee", id, async (iid) => { await deleteEmployeeMaster(iid); afterAction("تم حذف الموظف"); }); }}
           />
         </>
-      )}
+        );
+      })()}
 
       {tab === "buses" && (
         <CrudTable
           title="الباصات" subtitle="إدارة أسطول الباصات. عند وجود رحلات سابقة يُعطّل بدلاً من الحذف."
           items={buses} columns={busColumns} fields={busFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, id) => { if (id) { await updateBus(id, p); } else { await addBus(p); } afterAction("تم حفظ بيانات الباص"); }}
           onDelete={async id => { const res = await deleteBus(id); afterAction(res.deactivated ? "الباص مستخدم في رحلات — تم تعطيله" : "تم حذف الباص"); }}
         />
@@ -1188,6 +1380,7 @@ export default function AdminPage() {
         <CrudTable
           title="الخطوط" subtitle="خطوط السير المتاحة لتخطيط الرحلات."
           items={routes} columns={routeColumns} fields={routeFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, id) => { if (id) { await updateRoute(id, p); } else { await addRoute(p); } afterAction("تم حفظ الخط"); }}
           onDelete={async id => { const res = await deleteRoute(id); afterAction(res.deactivated ? "الخط مستخدم في رحلات — تم تعطيله" : "تم حذف الخط"); }}
         />
@@ -1197,6 +1390,7 @@ export default function AdminPage() {
         <CrudTable
           title="الشركات" subtitle="التحكم بشركات التشغيل وترميزها."
           items={companies} columns={companyColumns} fields={companyFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, i) => { await localSave("company", p, i, async (pp, iid) => { if (iid !== undefined) await updateCompany(iid, pp); else await addCompany(pp); }, "الشركة"); }}
           onDelete={async id => { await localRemove("company", id, async (iid) => { const res = await deleteCompany(iid); afterAction(res.deactivated ? "الشركة مرتبطة بإدارات — تم تعطيلها" : "تم حذف الشركة"); }); }}
         />
@@ -1206,6 +1400,7 @@ export default function AdminPage() {
         <CrudTable
           title="الإدارات" subtitle="إدارات الموظفين المرتبطة بكل شركة."
           items={departments} columns={departmentColumns} fields={departmentFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, id) => { if (id) { await updateDepartment(id, p); } else { await addDepartment(p); } afterAction("تم حفظ الإدارة"); }}
           onDelete={async id => { await deleteDepartment(id); afterAction("تم حذف الإدارة"); }}
         />
@@ -1215,6 +1410,7 @@ export default function AdminPage() {
         <CrudTable
           title="الوظائف" subtitle="المسميات الوظيفية."
           items={jobs} columns={jobColumns} fields={jobFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, id) => { if (id) { await updateJob(id, p); } else { await addJob(p); } afterAction("تم حفظ الوظيفة"); }}
           onDelete={async id => { await deleteJob(id); afterAction("تم حذف الوظيفة"); }}
         />
@@ -1224,6 +1420,7 @@ export default function AdminPage() {
         <CrudTable
           title="السكن" subtitle="مواقع السكن المتاحة."
           items={housing} columns={housingColumns} fields={housingFields}
+          canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
           onSave={async (p, id) => { if (id) { await updateHousing(id, p); } else { await addHousing(p); } afterAction("تم حفظ السكن"); }}
           onDelete={async id => { await deleteHousing(id); afterAction("تم حذف السكن"); }}
         />
@@ -1252,8 +1449,8 @@ export default function AdminPage() {
                       <td>{req.status}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="secondary-btn" onClick={() => review(req.id, "approved")}><UserCheck size={16} />اعتماد</button>
-                          <button className="danger-btn" onClick={() => review(req.id, "rejected")}>رفض</button>
+                          {perms.edit && <button className="secondary-btn" onClick={() => review(req.id, "approved")}><UserCheck size={16} />اعتماد</button>}
+                          {perms.edit && <button className="danger-btn" onClick={() => review(req.id, "rejected")}>رفض</button>}
                         </div>
                       </td>
                     </tr>
@@ -1326,6 +1523,16 @@ export default function AdminPage() {
             const scheduleOf = (empCode: string) => allEmployees.find((e) => e.employee_code === empCode) || null;
             const tripDateRaw = reportTripDateRaw(viewReport);
             const dayBoard = boardedCodesForDate(reports, tripDateRaw || "");
+            const dayFirst = dayFirstBoardedTrip(reports, tripDateRaw || "");
+            const dupNoteOf = (p: any) => {
+              const code = p && p.employee_code ? String(p.employee_code).trim() : "";
+              if (!code) return "";
+              const want = reportTypeOf(viewReport) === "قادم" ? "arriving" : "departing";
+              const firstTrip = previousBoardedTrip(dayFirst, code, want);
+              if (!firstTrip) return "";
+              const tripNo = String(viewReport.trip_number || viewReport.raw?.trip?.trip_id || "؟").trim() || "؟";
+              return firstTrip !== tripNo ? `تم تسجيله في رحلة سابقة (رحلة ${firstTrip})` : "";
+            };
             const plannedEmployees = tripDateRaw ? allEmployees.filter((e) => employeeCycle(e, tripDateRaw)?.isWorkDay) : [];
             const plannedCodes = new Set(plannedEmployees.map((e) => String(e.employee_code)));
             const plannedBoarded = plannedEmployees.filter((e) => dayBoard.has(String(e.employee_code))).length;
@@ -1347,13 +1554,19 @@ export default function AdminPage() {
             };
             const matchCell = (p: any) => {
               if (!p.employee_code) return <small className="muted">غير موظف</small>;
+              const dup = dupNoteOf(p);
+              if (dup) return <span className="stack-cell"><span className="status status-cancelled">مخالف — تسجيل مكرر</span><small>{dup}</small></span>;
               const emp = scheduleOf(String(p.employee_code));
               if (!emp) return <small className="muted">غير مسجّل في الكشف</small>;
               const cycle = employeeCycle(emp, tripDateRaw || todayIso());
               if (!cycle) return <small className="muted">بلا دورة</small>;
-              return cycle.isWorkDay
-                ? <span className="status status-completed">مطابق الخطة</span>
-                : <span className="status status-cancelled">صعد بلا خطة</span>;
+              if (cycle.isWorkDay) return <span className="status status-completed">مطابق الخطة</span>;
+              const restLabel = cycle.status === "vacation"
+                ? "مخالف — صعد في يوم راحة"
+                : cycle.status === "transport_arrange"
+                  ? "مخالف — ترتيب مواصلات"
+                  : "صعد بلا خطة";
+              return <span className="status status-cancelled">{restLabel}</span>;
             };
             const cycleCell = (p: any) => {
               if (!p.employee_code) return <span className="status status-planned">—</span>;
@@ -1493,7 +1706,7 @@ export default function AdminPage() {
             <div className="section-title" style={{ flexWrap: "wrap", gap: 12 }}>
               <div>
                 <h2>الخطة اليومية التلقائية</h2>
-                <span>تُحسب خطة القادمين والمغادرين لكل خط (موقع السكن) من دورية كل موظف تلقائياً — بلا ربطها بأي سائق — وتُقارن فوراً بالرحلات الفعلية الواردة من تقارير السائقين في نفس اليوم. ويُحتسب الموظفون ذوو «الدوام اليومي» (قدوم 8ص ومغادرة 4م) ضمن القادمين والمغادرين كل يوم عمل.</span>
+                <span>تُحسب خطة القادمين والمغادرين لكل خط (موقع السكن) من دورية كل موظف تلقائياً — بلا ربطها بأي سائق — وتُقارن فوراً بالرحلات الفعلية الواردة من تقارير السائقين في نفس اليوم. ويُحتسب الموظفون ذوو «الدوام اليومي» (قدوم 8ص ومغادرة 4م) ضمن القادمين والمغادرين كل يوم عمل، وكذلك سكان المناطق القريبة (الصليف/الولي/الضبرة/الزحيفي) فيُعاملون كنقل يومي بكافة أنواع الدوام.</span>
               </div>
               <label className="field" style={{ minWidth: 190 }}>
                 <span>تاريخ اليوم</span>
@@ -1585,13 +1798,16 @@ export default function AdminPage() {
           .filter((r) => !actualBus || r.bus === actualBus)
           .filter((r) => !actualHousing || r.housing === actualHousing)
           .filter((r) => !actualStatus || (actualStatus === "match" ? r.status === "match" : r.status !== "match"));
-        const statusNoteOf = (r: ActualRow) => (r.status === "nonemp" ? "غير موظف" : r.status === "unknown" ? "غير مسجّل في الكشف" : "مخالف لخطة الدوام");
+        const statusNoteOf = (r: ActualRow) =>
+          r.note ||
+          (r.status === "nonemp" ? "غير موظف" : r.status === "unknown" ? "غير مسجّل في الكشف" : "مخالف لخطة الدوام");
         const statusLabelOf = (r: ActualRow) => (r.status === "match" ? "حسب الخطة" : `مخالف — ${statusNoteOf(r)}`);
-        const exportHeaders = ["#", "الكود", "الاسم", "الخط (السكن)", "الإدارة", "نوع الدوام", "السائق", "الباص", "المسار", "الرحلة", "النوع", "وقت الصعود", "المطابقة"];
-        const exportRows = rows.map((r, i) => [i + 1, r.code || "", r.name || "", r.housing || "", r.department || "", r.schedule || "", r.driver, r.bus, r.route, r.tripNumber, r.tripType, r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "", statusLabelOf(r)]);
+        const exportHeaders = ["#", "الكود", "الاسم", "الخط (السكن)", "الإدارة", "نوع الدوام", "السائق", "الباص", "المسار", "الرحلة", "النوع", "وقت الصعود", "المطابقة", "الملاحظة"];
+        const exportRows = rows.map((r, i) => [i + 1, r.code || "", r.name || "", r.housing || "", r.department || "", r.schedule || "", r.driver, r.bus, r.route, r.tripNumber, r.tripType, r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "", statusLabelOf(r), statusNoteOf(r)]);
         const actualTitle = "الموظفون الفعليون (الصاعدون)";
         const actualSubtitle = `التاريخ: ${dateValue} · عدد الصاعدين: ${rows.length}`;
         const count = (s: ActualRow["status"]) => all.filter((r) => r.status === s).length;
+        const dupCount = all.filter((r) => r.duplicate).length;
         const statusCell = (r: ActualRow) => {
           if (r.status === "match") return <span className="status status-completed">حسب الخطة</span>;
           return <span className="stack-cell"><span className="status status-cancelled">مخالف</span><small>{statusNoteOf(r)}</small></span>;
@@ -1615,6 +1831,7 @@ export default function AdminPage() {
               <div className="metric"><div><span>إجمالي الصاعدين</span><strong>{all.length}</strong></div></div>
               <div className="metric"><div><span>حسب الخطة</span><strong>{count("match")}</strong></div></div>
               <div className="metric"><div><span>مخالفون</span><strong>{all.length - count("match")}</strong></div></div>
+              <div className="metric"><div><span>تسجيل مكرر (رحلة سابقة)</span><strong>{dupCount}</strong></div></div>
               <div className="metric"><div><span>منهم غير موظف/غير مسجّل</span><strong>{count("unknown") + count("nonemp")}</strong></div></div>
             </div>
             <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
@@ -1669,7 +1886,7 @@ export default function AdminPage() {
                   <thead>
                     <tr>
                       <th>#</th><th>الكود</th><th>الاسم</th><th>الخط (السكن)</th><th>الإدارة</th>
-                      <th>نوع الدوام</th><th>السائق</th><th>الباص</th><th>المسار</th><th>الرحلة</th><th>النوع</th><th>وقت الصعود</th><th>المطابقة</th>
+                      <th>نوع الدوام</th><th>السائق</th><th>الباص</th><th>المسار</th><th>الرحلة</th><th>النوع</th><th>وقت الصعود</th><th>المطابقة</th><th>الملاحظة</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1688,10 +1905,11 @@ export default function AdminPage() {
                         <td>{r.tripType}</td>
                         <td>{r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "—"}</td>
                         <td>{statusCell(r)}</td>
+                        <td>{r.note ? <span className="stack-cell"><small>{r.note}</small></span> : "—"}</td>
                       </tr>
                     ))}
                     {!rows.length && (
-                      <tr><td colSpan={13} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                      <tr><td colSpan={14} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
                         لا يوجد صاعدون فعليون لهذا التاريخ/الفلتر — ستظهر الحالات هنا فور وصول تقارير رحلات السائقين.
                       </td></tr>
                     )}

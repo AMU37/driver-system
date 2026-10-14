@@ -16,7 +16,7 @@ from app.seed import seed_if_empty
 
 logger = logging.getLogger("uvicorn.error")
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 # Demo credentials seeded by seed.py — if detected in production the account is
 # locked until the password is changed.

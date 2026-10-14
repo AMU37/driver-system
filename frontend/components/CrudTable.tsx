@@ -6,7 +6,7 @@ export type CrudOption = { value: string | number | boolean; label: string };
 export type CrudField = {
   key: string;
   label: string;
-  type?: "text" | "number" | "password" | "select" | "checkboxes";
+  type?: "text" | "number" | "password" | "select" | "checkboxes" | "date" | "time";
   options?: CrudOption[];
   required?: boolean;
   full?: boolean;
@@ -33,9 +33,12 @@ type Props = {
   searchPlaceholder?: string;
   onSearch?: (query: string) => void;
   searchValue?: string;
+  canAdd?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
 };
 
-export default function CrudTable({ title, subtitle, items, columns, fields, onSave, onDelete, extraHeader, searchable, searchPlaceholder, onSearch, searchValue }: Props) {
+export default function CrudTable({ title, subtitle, items, columns, fields, onSave, onDelete, extraHeader, searchable, searchPlaceholder, onSearch, searchValue, canAdd = true, canEdit = true, canDelete = true }: Props) {
   const [editing, setEditing] = useState<{ id?: number | string; values: Record<string, any> } | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -112,7 +115,7 @@ export default function CrudTable({ title, subtitle, items, columns, fields, onS
             </div>
           )}
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button className="primary-btn" onClick={openCreate}><Plus size={18} />إضافة جديد</button>
+            {canAdd && <button className="primary-btn" onClick={openCreate}><Plus size={18} />إضافة جديد</button>}
           </div>
         </div>
       </div>
@@ -130,8 +133,8 @@ export default function CrudTable({ title, subtitle, items, columns, fields, onS
                   ))}
                   <td>
                     <div className="row-actions">
-                      <button className="secondary-btn" onClick={() => openEdit(item)}><Pencil size={15} />تعديل</button>
-                      {onDelete && <button className="danger-btn" onClick={() => remove(item)}><Trash2 size={15} />حذف</button>}
+                      {canEdit && <button className="secondary-btn" onClick={() => openEdit(item)}><Pencil size={15} />تعديل</button>}
+                      {canDelete && onDelete && <button className="danger-btn" onClick={() => remove(item)}><Trash2 size={15} />حذف</button>}
                     </div>
                   </td>
                 </tr>
@@ -195,8 +198,8 @@ export default function CrudTable({ title, subtitle, items, columns, fields, onS
                     ) : (
                       <div className="input-wrap">
                         <input
-                          type={f.type === "password" ? "password" : f.type === "number" ? "number" : "text"}
-                          value={editing.values[f.key] ?? ""}
+                          type={f.type === "password" ? "password" : f.type === "number" ? "number" : f.type === "date" ? "date" : f.type === "time" ? "time" : "text"}
+                          value={f.type === "date" ? String(editing.values[f.key] ?? "").slice(0, 10) : f.type === "time" ? String(editing.values[f.key] ?? "").slice(0, 5) : (editing.values[f.key] ?? "")}
                           onChange={e => setEditing({ ...editing, values: { ...editing.values, [f.key]: f.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value } })}
                         />
                       </div>

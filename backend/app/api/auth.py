@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import effective_permissions
 from app.core.ratelimit import enforce, login_ip_limiter, login_user_limiter, refresh_limiter
 from app.core.security import (
     create_access_token,
@@ -29,6 +30,12 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _with_effective_permissions(user: User) -> User:
+    """يرجع كائن المستخدم مع الصلاحيات الفعلية (الدور + المخصّصة) دون حفظها في قاعدة البيانات."""
+    user.permissions = effective_permissions(user)
+    return user
+
+
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip = _client_ip(request)
@@ -44,7 +51,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     return TokenResponse(
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
-        user=user,
+        user=_with_effective_permissions(user),
     )
 
 
@@ -63,7 +70,7 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
     return TokenResponse(
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
-        user=user,
+        user=_with_effective_permissions(user),
     )
 
 
@@ -86,7 +93,7 @@ def change_password(
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
-    return user
+    return _with_effective_permissions(user)
 
 
 @router.post("/recover")

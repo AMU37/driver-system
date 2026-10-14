@@ -8,6 +8,9 @@ import { downloadContent, openWhatsApp, printTripPdf, tripToXlsText } from "@/li
 import { useAuthGuard, currentUser } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
 
+/** مصادر الركاب غير المسجّلين في كشف الموظفين (يُعرض لهم نموذج البيانات كاملاً). */
+const NON_MASTER_SOURCES = new Set(["non_employee", "new_employee", "code_only"]);
+
 export default function TripClient({ id }: { id?: string | null }) {
   useAuthGuard(["driver"]);
   const [trip, setTrip] = useState<LocalTrip | null>(null);
@@ -157,18 +160,20 @@ export default function TripClient({ id }: { id?: string | null }) {
     const user = currentUser();
     if (!trip || !user || !editing) return;
     setEditError("");
-    if (editing.source === "non_employee") {
+    if (NON_MASTER_SOURCES.has(editing.source)) {
       const missing: string[] = [];
       if (!editForm.name.trim()) missing.push("الاسم");
       if (!editForm.coming_from.trim()) missing.push("الجهة القادم منها");
       if (!editForm.summoned_department.trim()) missing.push("الجهة التي استدعته");
       if (missing.length) { setEditError(`هذه الحقول إجبارية: ${missing.join("، ")}`); return; }
       const res = updatePassengerInTrip(trip.id, user.username, editing.client_uuid, {
+        employee_code: editForm.employee_code.trim() || undefined,
         name: editForm.name,
         coming_from: editForm.coming_from,
         summoned_department: editForm.summoned_department,
         visit_purpose: editForm.purpose,
       });
+      if (res.duplicated) { setEditError("هذا الكود مُسجَّل مسبقاً في الرحلة"); return; }
       if (!res.trip) { setEditError("تعذر حفظ التعديل — الرحلة غير نشطة أو مكتملة"); return; }
       setMsg("تم تحديث بيانات الراكب");
       setEditing(null);
@@ -432,8 +437,9 @@ export default function TripClient({ id }: { id?: string | null }) {
               <button className="icon-btn" onClick={() => setEditing(null)}>×</button>
             </div>
             <div className="stack-lg">
-              {editing.source === "non_employee" ? (
+              {NON_MASTER_SOURCES.has(editing.source) ? (
                 <>
+                  <label className="field"><span>كود الموظف (اختياري — إن وُجد يُطابَق مع كشف الموظفين)</span><input value={editForm.employee_code} onChange={e => setEditForm({ ...editForm, employee_code: e.target.value })} inputMode="numeric" /></label>
                   <label className="field"><span>الاسم{REQ}</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} autoFocus /></label>
                   <label className="field"><span>الجهة القادم منها{REQ}</span><input value={editForm.coming_from} onChange={e => setEditForm({ ...editForm, coming_from: e.target.value })} placeholder="مثال: شركة المقاولات..." /></label>
                   <label className="field"><span>الجهة التي استدعته{REQ}</span>

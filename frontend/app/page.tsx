@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [online, setOnline] = useState(true);
 
-  const home = (user: User | { role: string }) => homeForRole(user.role);
+  const home = (user: User | { role: string }) => homeForRole(user.role, user);
   const go = (url: string) => { window.location.assign(routePath(url)); };
 
   useEffect(() => {

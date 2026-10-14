@@ -19,7 +19,7 @@ export default function AboutPage() {
       </div>
       <div className="about-content">
         <section className="section">
-          <div className="section-title"><div><h2>حول النظام</h2><span>نظام رحلات سيارات الموظفين — الإصدار 1.0.1</span></div><Info size={18}/></div>
+          <div className="section-title"><div><h2>حول النظام</h2><span>نظام رحلات سيارات الموظفين — الإصدار 1.0.6</span></div><Info size={18}/></div>
           <p className="muted">نظام مخصص لإدارة حركة نقل الموظفين بين مواقع العمل (الحديدة، الصليف، الولي، الزحيفي، الضبره، الشركة). يعمل التطبيق على أجهزة السائقين حتى بدون إنترنت، وتُحفظ قواعد البيانات الأساسية داخل التطبيق نفسه، وتُرسل بيانات الرحلات المكتملة تلقائياً إلى نظام مايكروسوفت (Power Automate) عند توفر الاتصال.</p>
           {meta && <div className="detail-grid"><div><span>تاريخ بيانات الجهاز</span><strong>{new Date(meta.built_at).toLocaleString("ar-EG")}</strong></div><div><span>الموظفون</span><strong>{meta.counts.employees ?? 0}</strong></div><div><span>الباصات</span><strong>{meta.counts.buses ?? 0}</strong></div><div><span>الرحلات المخططة</span><strong>{meta.counts.planned ?? 0}</strong></div></div>}
         </section>

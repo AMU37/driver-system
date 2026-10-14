@@ -7,9 +7,12 @@ export function routePath(p: string): string {
   return base + "/index.html" + query;
 }
 
+import { canDo } from "@/lib/permissions";
+
 /** الصفحة الرئيسية لكل دور بعد تسجيل الدخول. */
-export function homeForRole(role?: string | null): string {
+export function homeForRole(role?: string | null, user?: { role?: string | null; permissions?: Record<string, boolean> | null } | null): string {
   if (role === "driver") return "/dashboard";
   if (role === "viewer") return "/reports";
+  if (role === "supervisor" && user && !canDo(user, "view")) return "/reports";
   return "/admin";
 }

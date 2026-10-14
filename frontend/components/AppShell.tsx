@@ -7,6 +7,7 @@ import { logout } from "@/lib/api";
 import { autoPushPending, clearLocalSession } from "@/lib/offlineStore";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
+import { canDo } from "@/lib/permissions";
 
 const driverItems = [
   ["/dashboard", "الرئيسية", LayoutDashboard],
@@ -39,7 +40,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const user = useAuthGuard();
   const isAdmin = user && (user.role === "admin" || user.role === "supervisor");
   const isViewer = user?.role === "viewer";
-  const nav = isAdmin ? adminItems : isViewer ? viewerItems : driverItems;
+  const supervisorCanViewAdmin = user?.role === "supervisor" ? canDo(user, "view") : true;
+  const nav = isAdmin && supervisorCanViewAdmin ? adminItems : isViewer || (isAdmin && !supervisorCanViewAdmin) ? viewerItems : driverItems;
   useEffect(() => {
     if (!user || user.role !== "driver") return;
     const username = user.username;
