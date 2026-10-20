@@ -21,6 +21,7 @@ from app.models import (
     User,
     UserRole,
 )
+from app.services.employees import effective_transport_type
 from app.schemas import (
     BusCreate,
     BusUpdate,
@@ -129,7 +130,11 @@ def create_employee(
 ):
     if db.scalar(select(Employee).where(Employee.employee_code == payload.employee_code)):
         raise _conflict("كود الموظف موجود مسبقاً")
-    employee = Employee(**payload.model_dump())
+    data = payload.model_dump()
+    data["transport_type"] = effective_transport_type(
+        data.get("transport_type"), data.get("housing_location"), data.get("service_type")
+    )
+    employee = Employee(**data)
     db.add(employee)
     db.commit()
     db.refresh(employee)
@@ -152,6 +157,9 @@ def update_employee(
             raise _conflict("كود الموظف مستخدم مسبقاً")
     for field, value in data.items():
         setattr(employee, field, value)
+    employee.transport_type = effective_transport_type(
+        employee.transport_type, employee.housing_location, employee.service_type
+    )
     db.commit()
     db.refresh(employee)
     return employee

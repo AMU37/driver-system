@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -121,6 +121,39 @@ def migrate_schema() -> None:
     _migrate_non_employee_columns()
     _normalize_datetime_columns()
     _ensure_pg_enum_values()
+    _classify_transport_types()
+
+
+def _classify_transport_types() -> None:
+    """تصنيف النقل للموظفين أثناء الإقلاع (معرّف وغير قابل للتكرار):
+    - نوع الخدمة «أخرى» ⇒ «لا يوجد نقل».
+    - سكّان المواقع القريبة (الولي/الزحيفي/الضبرة/الصليف) ⇒ «نقل يومي».
+    """
+    from app.models.models import Employee
+    from app.services.employees import effective_transport_type
+
+    if not column_exists("employees", "transport_type"):
+        return
+    try:
+        with SessionLocal() as db:
+            changed = 0
+            rows = db.execute(
+                select(Employee.id, Employee.housing_location, Employee.service_type, Employee.transport_type)
+            ).all()
+            for emp_id, housing, service, transport in rows:
+                new_value = effective_transport_type(transport, housing, service)
+                if (new_value or None) != (transport or None):
+                    db.execute(
+                        Employee.__table__.update()
+                        .where(Employee.id == emp_id)
+                        .values(transport_type=new_value)
+                    )
+                    changed += 1
+            if changed:
+                db.commit()
+    except Exception:
+        # جزء تحسيني — لا يمنع تشغيل التطبيق عند أي خلل.
+        return
 
 
 def _migrate_non_employee_columns() -> None:

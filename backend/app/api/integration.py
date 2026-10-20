@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.ratelimit import enforce, integration_limiter
 from app.models import Employee, PlannedTrip
 from app.schemas import EmployeeSyncPayload, PlannedTripImport
+from app.services.employees import effective_transport_type
 from app.services.trips import import_planned_trip
 
 router = APIRouter(prefix="/api/integration", tags=["integration"])
@@ -61,5 +62,8 @@ def sync_employees(payload: EmployeeSyncPayload, _: None = Depends(require_inbou
             updated += 1
         for field in _SCHEDULE_FIELDS:
             setattr(employee, field, getattr(item, field))
+        employee.transport_type = effective_transport_type(
+            employee.transport_type, employee.housing_location, employee.service_type
+        )
     db.commit()
     return {"ok": True, "received": len(payload.employees), "created": created, "updated": updated}

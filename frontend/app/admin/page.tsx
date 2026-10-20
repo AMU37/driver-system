@@ -4,8 +4,8 @@ import AppShell from "@/components/AppShell";
 import CrudTable, { type CrudColumn, type CrudField } from "@/components/CrudTable";
 import StatusBadge from "@/components/StatusBadge";
 import { MultiSelect } from "@/components/MultiSelect";
-import TripsOverview from "@/components/TripsOverview";
 import TripsBreakdown from "@/components/TripsBreakdown";
+import ReportsView from "@/components/ReportsView";
 import {
   addBus, addCompany, addDepartment, addDriver, addAdminUser, addEmployeeMaster, addHousing, addJob, addRoute,
   createAdminPlan, deleteAdminTripReport, deleteAdminUser, deleteBus, deleteCompany, deleteDepartment, deleteDriver, deleteEmployeeMaster,
@@ -20,12 +20,12 @@ import { currentUser, useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot, type TripType } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, downloadTable, downloadSectionsXls, openReportTripWhatsApp, openWhatsAppText, printTableReport, printReportSections, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText, type ReportSection } from "@/lib/export";
-import { employeeCycle, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
+import { effectiveTransportType, employeeCycle, isExcludedFromTransport, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
 import { VIOLATION_KIND_LABEL, VIOLATION_KIND_ORDER, violationKindId, type ViolationKind } from "@/lib/analytics";
 import { DRIVER_SCORE, TRIP_TIME_WINDOWS, evaluateDrivers, windowsLabel } from "@/lib/driverEval";
 import { effectivePermissions } from "@/lib/permissions";
 
-type Tab = "plans" | "planner" | "daily" | "actual" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare" | "breakdown" | "drivers_eval";
+type Tab = "plans" | "planner" | "daily" | "actual" | "drivers" | "users" | "employees" | "buses" | "routes" | "companies" | "departments" | "jobs" | "housing" | "new" | "trips" | "compare" | "breakdown" | "drivers_eval" | "dashboard";
 
 const CYCLE_STATUS_OPTIONS: { value: CycleStatus | ""; label: string }[] = [
   { value: "", label: "كل الحالات" },
@@ -48,9 +48,13 @@ const PERMISSION_LABEL: Record<string, string> = { view: "عرض", add: "إضا�
 const mapSnapshotDriver = (d: any) => ({ id: d.id, driver_code: d.driver_code ?? "", username: d.username, full_name: d.full_name, role: d.role, company_code: d.company_code, is_active: true });
 const mapSnapshotUsers = (u: any) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, driver_code: u.driver_code ?? "", company_code: u.company_code ?? "", is_active: true, must_change_password: false });
 const mapSnapshotPlanned = (p: any) => ({ ...p, driver_username: p.driver_username ?? "", status: p.status ?? "planned", trip_number: p.trip_number ?? String(p.id), trip_date: p.trip_date ?? "" });
-const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", route_name: e.route_name ?? "", work_schedule: e.work_schedule ?? "", schedule_desc: e.schedule_desc ?? "", work_days: e.work_days ?? null, rest_days: e.rest_days ?? null, first_work_day: e.first_work_day ?? "", rotation_status: e.rotation_status ?? "", departure_time: e.departure_time ?? "", gender: e.gender ?? "", service_type: e.service_type ?? "", transport_type: e.transport_type ?? "", cycle_day_today: e.cycle_day_today ?? null, base_status_today: e.base_status_today ?? "", cycle_day_tomorrow: e.cycle_day_tomorrow ?? null, is_active: e.is_active });
+const mapSnapshotEmployee = (e: any) => ({ id: e.id, employee_code: e.employee_code, name: e.name, job_title: e.job_title ?? "", department_name: e.department_name ?? "", company_name: e.company_name ?? "", housing_location: e.housing_location ?? "", route_name: e.route_name ?? "", work_schedule: e.work_schedule ?? "", schedule_desc: e.schedule_desc ?? "", work_days: e.work_days ?? null, rest_days: e.rest_days ?? null, first_work_day: e.first_work_day ?? "", rotation_status: e.rotation_status ?? "", departure_time: e.departure_time ?? "", gender: e.gender ?? "", service_type: e.service_type ?? "", transport_type: effectiveTransportType(e), cycle_day_today: e.cycle_day_today ?? null, base_status_today: e.base_status_today ?? "", cycle_day_tomorrow: e.cycle_day_tomorrow ?? null, is_active: e.is_active });
 const mapSnapshotBus = (b: any) => ({ id: b.id, number: b.number, plate_number: b.plate_number ?? "", capacity: b.capacity, company_code: b.company_code, is_active: b.is_active });
 const mapSnapshotRoute = (r: any) => ({ id: r.id, name: r.name, origin: r.origin ?? "", destination: r.destination ?? "", company_code: r.company_code, is_active: r.is_active });
+
+/** قوائم الموظفين بعد تطبيق تصنيف النقل الفعّال: سكان (الولي/الزحيفي/الضبرة/الصليف) ⇒ «نقل يومي». */
+const normalizeEmployeesList = (list: any): any[] =>
+  (Array.isArray(list) ? list : []).map((e: any) => ({ ...e, transport_type: effectiveTransportType(e) }));
 
 /** شارة الحالة الدورية للموظف (قادم/مداوم/مغادر/إجازة/ترتيب مواصلات). */
 function CycleBadge({ info, withPosition = false }: { info: CycleInfo | null; withPosition?: boolean }) {
@@ -232,7 +236,7 @@ function actualRowsForDate(reports: any[], dateValue: string, employees: any[]):
   return rows;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** الرحلة القديمة المخططة قبل إضافة النوع لا تُعرض كنوع محدد. */
 export const tripTypeLabel = (value?: string | null) => {
@@ -247,7 +251,11 @@ export default function AdminPage() {
   const me = useAuthGuard(["admin", "supervisor"]);
   const isAdminUser = me?.role === "admin";
   const perms = effectivePermissions(me);
-  const [tab, setTab] = useState<Tab>("plans");
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "plans";
+    const q = new URLSearchParams(window.location.search).get("tab");
+    return (q as Tab) || "plans";
+  });
   const [drivers, setDrivers] = useState<User[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [plans, setPlans] = useState<PlannedTrip[]>([]);
@@ -328,7 +336,7 @@ export default function AdminPage() {
   const empRotationStatusOptions = uniqueFieldOptions("rotation_status", ["مداوم", "إجازة", "ترتيب مواصلات"]);
   const empGenderOptions = uniqueFieldOptions("gender", ["ذكر", "أنثى"]);
   const empServiceTypeOptions = uniqueFieldOptions("service_type", ["نقل", "سكن", "نقل-سكن", "أخرى", "فروع"]);
-  const empTransportTypeOptions = uniqueFieldOptions("transport_type", ["نقل يومي", "نقل دوري"]);
+  const empTransportTypeOptions = uniqueFieldOptions("transport_type", ["نقل يومي", "نقل دوري", "لا يوجد نقل"]);
   const empBaseStatusOptions = uniqueFieldOptions("base_status_today", ["مداوم", "إجازة", "ترتيب مواصلات"]);
 
   const filteredEmployees = useMemo(() => {
@@ -373,8 +381,8 @@ export default function AdminPage() {
     }
     setDrivers(vals[0] ?? (snap ? snap.drivers.map(mapSnapshotDriver) : []));
     setPlans(vals[1] ?? (snap ? snap.planned.map(mapSnapshotPlanned) : []));
-    setEmployees(vals[2] ?? (snap ? snap.employees.map(mapSnapshotEmployee) : []));
-    setAllEmployees(vals[2] ?? (snap ? snap.employees.map(mapSnapshotEmployee) : []));
+    setEmployees(normalizeEmployeesList(vals[2] ?? (snap ? snap.employees.map(mapSnapshotEmployee) : [])));
+    setAllEmployees(normalizeEmployeesList(vals[2] ?? (snap ? snap.employees.map(mapSnapshotEmployee) : [])));
     setNewEmployees(vals[3] ?? []);
     setBuses(vals[4] ?? (snap ? snap.buses.map(mapSnapshotBus) : []));
     setRoutes(vals[5] ?? (snap ? (snap.routes ?? []).map(mapSnapshotRoute) : []));
@@ -542,8 +550,8 @@ export default function AdminPage() {
   function applyOpsToState() {
     setDrivers((prev) => applyAdminOps("driver", prev) as any[]);
     setCompanies((prev) => applyAdminOps("company", prev) as any[]);
-    setEmployees((prev) => applyAdminOps("employee", prev) as any[]);
-    setAllEmployees((prev) => applyAdminOps("employee", prev) as any[]);
+    setEmployees((prev) => normalizeEmployeesList(applyAdminOps("employee", prev)));
+    setAllEmployees((prev) => normalizeEmployeesList(applyAdminOps("employee", prev)));
   }
   async function localSave(entity: AdminEntity, payload: Record<string, any>, id: number | string | undefined, online: (pp: Record<string, any>, iid: number | string | undefined) => Promise<void>, label: string) {
     if (isLocalRowId(id)) {
@@ -881,7 +889,7 @@ export default function AdminPage() {
     { key: "departure_time", label: "وقت المغادرة", type: "time" },
     { key: "gender", label: "نوع الجنس", type: "select", options: empGenderOptions },
     { key: "service_type", label: "نوع الخدمة", type: "select", options: empServiceTypeOptions },
-    { key: "transport_type", label: "تصنيف النقل (يومي/دوري)", type: "select", options: empTransportTypeOptions },
+    { key: "transport_type", label: "تصنيف النقل (يومي/دوري/لا يوجد)", type: "select", options: empTransportTypeOptions },
     { key: "cycle_day_today", label: "يوم الدورة اليوم", type: "number" },
     { key: "base_status_today", label: "الحالة الأساسية اليوم", type: "select", options: empBaseStatusOptions },
     { key: "cycle_day_tomorrow", label: "يوم الدورة غداً", type: "number" },
@@ -958,6 +966,58 @@ export default function AdminPage() {
     { key: "is_active", label: "الحالة", type: "select", options: BOOL_OPTIONS },
   ];
 
+  const tabsBar = (() => {
+    const tabGroups: { key: string; label: string; tabs: { key: Tab; label: string }[] }[] = [
+      { key: "operations", label: "الرحلات المخططة", tabs: [
+        { key: "planner", label: "تخطيط المواصلات" },
+        { key: "plans", label: `الرحلات المخططة (${plans.length})` },
+        { key: "daily", label: "الخطة اليومية (تلقائي)" },
+      ] },
+      { key: "actual", label: "الرحلات الفعلية", tabs: [
+        { key: "trips", label: `رحلات السائقين (${reports.length})` },
+        { key: "actual", label: "الموظفون الفعليون" },
+      ] },
+      { key: "reports", label: "المقارنات والتقارير", tabs: [
+        { key: "breakdown", label: "عدد الرحلات (باص/سائق/سكن)" },
+        { key: "compare", label: "المخطط مقابل الفعلي" },
+        { key: "drivers_eval", label: "تقييم السائقين" },
+      ] },
+      { key: "hr", label: "الموظفون", tabs: [
+        { key: "employees", label: `الموظفون (${employees.length})` },
+        { key: "new", label: `طلبات الموظفين الجدد (${newEmployees.length})` },
+        { key: "jobs", label: `الوظائف (${jobs.length})` },
+        { key: "departments", label: `الإدارات (${departments.length})` },
+        { key: "companies", label: `الشركات (${companies.length})` },
+        { key: "housing", label: `السكن (${housing.length})` },
+      ] },
+      { key: "fleet", label: "الأسطول والخطوط", tabs: [
+        { key: "buses", label: `الباصات (${buses.length})` },
+        { key: "routes", label: `الخطوط (${routes.length})` },
+      ] },
+      { key: "access", label: "المستخدمون والسائقون", tabs: [
+        { key: "drivers", label: `السائقون (${drivers.length})` },
+        { key: "users", label: `المستخدمون (${users.length})` },
+      ] },
+    ];
+    const activeGroup = tabGroups.find((g) => g.tabs.some((x) => x.key === tab)) ?? tabGroups[0];
+    return (
+      <>
+        <div className="admin-tabs">
+          {tabGroups.map((g) => (
+            <button key={g.key} className={activeGroup.key === g.key ? "active" : ""} onClick={() => setTab(g.tabs[0].key)}>{g.label}</button>
+          ))}
+        </div>
+        {activeGroup.tabs.length > 1 && (
+          <div className="admin-subtabs">
+            {activeGroup.tabs.map((x) => (
+              <button key={x.key} className={tab === x.key ? "active" : ""} onClick={() => setTab(x.key)}>{x.label}</button>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  })();
+
   if (!perms.view) {
     return (
       <AppShell>
@@ -966,6 +1026,14 @@ export default function AdminPage() {
           <h2 style={{ margin: "0 0 6px" }}>لا تملك صلاحية عرض لوحة الإدارة</h2>
           <p className="muted">جرّت صلاحية «العرض» من حسابك. تواصل مع مدير النظام لاستعادة الدخول.</p>
         </div>
+      </AppShell>
+    );
+  }
+
+  if (tab === "dashboard") {
+    return (
+      <AppShell>
+        <ReportsView />
       </AppShell>
     );
   }
@@ -981,7 +1049,7 @@ export default function AdminPage() {
         <button className="secondary-btn" onClick={initialize} disabled={loading}><RefreshCw size={17} />تحديث</button>
       </div>
 
-      <TripsOverview reports={reports} employees={allEmployees} buses={buses} />
+      {tabsBar}
 
       {msg && <div className={`alert ${msg.includes("تعذر") || msg.includes("مطلوب") || msg.includes("غير صحيحة") ? "danger" : "success"}`}>{msg}</div>}
 
@@ -1036,58 +1104,6 @@ export default function AdminPage() {
       </div>
       )}
 
-      {(() => {
-        const tabGroups: { key: string; label: string; tabs: { key: Tab; label: string }[] }[] = [
-          { key: "operations", label: "الرحلات المخططة", tabs: [
-            { key: "planner", label: "تخطيط المواصلات" },
-            { key: "plans", label: `الرحلات المخططة (${plans.length})` },
-            { key: "daily", label: "الخطة اليومية (تلقائي)" },
-          ] },
-          { key: "actual", label: "الرحلات الفعلية", tabs: [
-            { key: "trips", label: `رحلات السائقين (${reports.length})` },
-            { key: "actual", label: "الموظفون الفعليون" },
-          ] },
-          { key: "reports", label: "المقارنات والتقارير", tabs: [
-            { key: "breakdown", label: "عدد الرحلات (باص/سائق/سكن)" },
-            { key: "compare", label: "المخطط مقابل الفعلي" },
-            { key: "drivers_eval", label: "تقييم السائقين" },
-          ] },
-          { key: "hr", label: "الموظفون", tabs: [
-            { key: "employees", label: `الموظفون (${employees.length})` },
-            { key: "new", label: `طلبات الموظفين الجدد (${newEmployees.length})` },
-            { key: "jobs", label: `الوظائف (${jobs.length})` },
-            { key: "departments", label: `الإدارات (${departments.length})` },
-            { key: "companies", label: `الشركات (${companies.length})` },
-            { key: "housing", label: `السكن (${housing.length})` },
-          ] },
-          { key: "fleet", label: "الأسطول والخطوط", tabs: [
-            { key: "buses", label: `الباصات (${buses.length})` },
-            { key: "routes", label: `الخطوط (${routes.length})` },
-          ] },
-          { key: "access", label: "المستخدمون والسائقون", tabs: [
-            { key: "drivers", label: `السائقون (${drivers.length})` },
-            { key: "users", label: `المستخدمون (${users.length})` },
-          ] },
-        ];
-        const activeGroup = tabGroups.find((g) => g.tabs.some((x) => x.key === tab)) ?? tabGroups[0];
-        return (
-          <>
-            <div className="admin-tabs">
-              {tabGroups.map((g) => (
-                <button key={g.key} className={activeGroup.key === g.key ? "active" : ""} onClick={() => setTab(g.tabs[0].key)}>{g.label}</button>
-              ))}
-            </div>
-            {activeGroup.tabs.length > 1 && (
-              <div className="admin-subtabs">
-                {activeGroup.tabs.map((x) => (
-                  <button key={x.key} className={tab === x.key ? "active" : ""} onClick={() => setTab(x.key)}>{x.label}</button>
-                ))}
-              </div>
-            )}
-          </>
-        );
-      })()}
-
       {tab === "planner" && (() => {
         const dateValue = planDate || todayIso();
         const q = planSearch.trim().toLowerCase();
@@ -1119,6 +1135,7 @@ export default function AdminPage() {
           .map((e) => ({ e, cycle: employeeCycle(e, dateValue) }))
           .filter((x) => x.cycle)
           .map((x) => ({ e: x.e, cycle: x.cycle as CycleInfo }))
+          .filter((x) => !isExcludedFromTransport(x.e))
           .filter((x) => planHousing.length === 0 || planHousing.includes(String(x.e.housing_location ?? "").trim()))
           .filter((x) => planRouteFilter.length === 0 || planRouteFilter.includes(String(x.e.route_name ?? "").trim()))
           .filter((x) => planSchedule.length === 0 || planSchedule.includes(String(x.e.work_schedule ?? "").trim()))
@@ -1388,7 +1405,13 @@ export default function AdminPage() {
             items={filteredEmployees} columns={employeeColumns} fields={employeeFields}
             canAdd={perms.add} canEdit={perms.edit} canDelete={perms.delete}
             searchable searchValue={empSearch} onSearch={onEmpSearch}
-            onSave={async (p, i) => { await localSave("employee", p, i, async (pp, iid) => { if (iid !== undefined) await updateEmployeeMaster(iid, pp); else await addEmployeeMaster(pp); }, "الموظف"); }}
+            onSave={async (p, i) => {
+              const merged = { ...(empOptionSource.find((e: any) => e.id === i) ?? {}), ...p };
+              const patch: Record<string, any> = { ...p };
+              const transportType = effectiveTransportType(merged);
+              if (transportType) patch.transport_type = transportType; else delete patch.transport_type;
+              await localSave("employee", patch, i, async (pp, iid) => { if (iid !== undefined) await updateEmployeeMaster(iid, pp); else await addEmployeeMaster(pp); }, "الموظف");
+            }}
             onDelete={async id => { await localRemove("employee", id, async (iid) => { await deleteEmployeeMaster(iid); afterAction("تم حذف الموظف"); }); }}
           />
         </>
@@ -1565,7 +1588,7 @@ export default function AdminPage() {
               const tripNo = String(viewReport.trip_number || viewReport.raw?.trip?.trip_id || "؟").trim() || "؟";
               return firstTrip !== tripNo ? `تم تسجيله في رحلة سابقة (رحلة ${firstTrip})` : "";
             };
-            const plannedEmployees = tripDateRaw ? allEmployees.filter((e) => employeeCycle(e, tripDateRaw)?.isWorkDay) : [];
+            const plannedEmployees = tripDateRaw ? allEmployees.filter((e) => !isExcludedFromTransport(e) && employeeCycle(e, tripDateRaw)?.isWorkDay) : [];
             const plannedCodes = new Set(plannedEmployees.map((e) => String(e.employee_code)));
             const plannedBoarded = plannedEmployees.filter((e) => dayBoard.has(String(e.employee_code))).length;
             const plannedMissing = plannedEmployees.length - plannedBoarded;
@@ -1693,6 +1716,7 @@ export default function AdminPage() {
         };
         const lineOf = (value: any) => String(value ?? "").trim() || "غير محدد";
         for (const e of allEmployees) {
+          if (isExcludedFromTransport(e)) continue;
           const c = employeeCycle(e, dateValue);
           if (!c) continue;
           const a = ensure(lineOf(e.housing_location));
@@ -2050,6 +2074,7 @@ export default function AdminPage() {
       {tab === "compare" && (() => {
         const dateValue = cycleDate || todayIso();
         const planned = allEmployees
+          .filter((e) => !isExcludedFromTransport(e))
           .map((e) => ({ emp: e, cycle: employeeCycle(e, dateValue) }))
           .filter((x) => x.cycle && x.cycle.isWorkDay)
           .map((x) => ({ ...x.emp, cycle: x.cycle as CycleInfo }));

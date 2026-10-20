@@ -317,7 +317,7 @@ function DirectionChart({ buckets, direction }: { buckets: Bucket[]; direction: 
   const w = 780;
   const h = 270;
   const padL = 38;
-  const padR = 14;
+  const padR = 108;
   const padT = 18;
   const padB = 34;
   const innerW = w - padL - padR;
@@ -343,6 +343,20 @@ function DirectionChart({ buckets, direction }: { buckets: Bucket[]; direction: 
   const labelEvery = Math.ceil(n / 10);
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: Math.round(maxV * f), yy: y(maxV * f) }));
 
+  // بطاقات نهاية كل خط: اسم السلسلة فقط لتمييز الخطوط.
+  const endLabels = series
+    .map((s) => ({
+      key: s.key,
+      label: s.label,
+      color: s.color,
+      dashed: !!s.dash,
+      y: y(s.values[n - 1] ?? 0),
+    }))
+    .sort((a, b) => a.y - b.y);
+  for (let i = 1; i < endLabels.length; i++) {
+    if (endLabels[i].y - endLabels[i - 1].y < 15) endLabels[i].y = endLabels[i - 1].y + 15;
+  }
+
   return (
     <div className="chart-wrap">
       <svg viewBox={`0 0 ${w} ${h}`} className="chart-svg" role="img" aria-label="الرحلات حسب اليوم (مغادر/قادم)">
@@ -355,6 +369,14 @@ function DirectionChart({ buckets, direction }: { buckets: Bucket[]; direction: 
         {series.map((s) => (
           <path key={s.key} d={linePath(s.values)} fill="none" stroke={s.color} strokeWidth={s.dash ? 2 : 2.5} strokeDasharray={s.dash || undefined} />
         ))}
+        {endLabels.map((e) => (
+          <g key={`el-${e.key}`}>
+            <rect x={w - padR + 8} y={e.y - 9} width={padR - 20} height={18} rx="4" fill="#ffffff" fillOpacity="0.9" stroke={e.color} strokeWidth="1" strokeDasharray={e.dashed ? "3 2" : undefined} />
+            <text x={w - padR + 8 + (padR - 20) / 2} y={e.y + 3.5} textAnchor="middle" fontSize="9.5" fontWeight="700" fill={e.color}>
+              {e.label}
+            </text>
+          </g>
+        ))}
         {n <= 60 &&
           series.map((s) =>
             buckets.map((b, i) => (
@@ -364,19 +386,26 @@ function DirectionChart({ buckets, direction }: { buckets: Bucket[]; direction: 
             )),
           )}
         {n <= 16 &&
-          series
-            .filter((s) => s.key === "ad" || s.key === "aa")
-            .map((s) =>
-              buckets.map((b, i) => {
-                const v = s.values[i];
-                if (!v) return null;
-                return (
-                  <text key={`v-${s.key}-${b.key}`} x={x(i)} y={y(v) - 5} textAnchor="middle" fontSize="9.5" fontWeight="700" fill={s.color}>
-                    {v}
-                  </text>
-                );
-              }),
-            )}
+          series.map((s) =>
+            buckets.map((b, i) => {
+              const v = s.values[i];
+              if (!v) return null;
+              const planned = !!s.dash;
+              return (
+                <text
+                  key={`v-${s.key}-${b.key}`}
+                  x={x(i)}
+                  y={y(v) + (planned ? 13 : -5)}
+                  textAnchor="middle"
+                  fontSize="9.5"
+                  fontWeight="700"
+                  fill={s.color}
+                >
+                  {v}
+                </text>
+              );
+            }),
+          )}
         {buckets.map((b, i) =>
           i % labelEvery === 0 || i === n - 1 ? (
             <text key={`l-${b.key}`} x={x(i)} y={h - 12} textAnchor="middle" fontSize="10" fill="#8b97a6">{b.label}</text>

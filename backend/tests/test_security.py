@@ -78,9 +78,9 @@ def test_login_rate_limited_after_repeated_failures():
 def test_successful_login_resets_user_failures():
     for _ in range(3):
         client.post("/api/auth/login", json={"username": "admin", "password": "wrong-password"})
-    res = client.post("/api/auth/login", json={"username": "admin", "password": "Admin@12345"})
+    res = client.post("/api/auth/login", json={"username": "admin", "password": "Ali@12345"})
     assert res.status_code == 200
-    res2 = client.post("/api/auth/login", json={"username": "admin", "password": "Admin@12345"})
+    res2 = client.post("/api/auth/login", json={"username": "admin", "password": "Ali@12345"})
     assert res2.status_code == 200
 
 

@@ -961,6 +961,7 @@ export function completeLocalTrip(tripId: string, driverUsername: string): Local
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
   if (!trip || trip.status !== "boarding") return null;
+  if (!trip.passengers.length) return null;
   trip.status = "completed";
   trip.completed_at = new Date().toISOString();
   persistTrips(list);
@@ -1057,13 +1058,13 @@ async function runSync(driverUsername: string): Promise<SyncResult> {
   const hasBackend = !!base && !!token;
   if (!url && !hasBackend) {
     return {
-      pending: listLocalTrips(driverUsername).filter((t) => t.status === "completed" && !t.synced_at).length,
+      pending: listLocalTrips(driverUsername).filter((t) => t.status === "completed" && !t.synced_at && t.passengers.length > 0).length,
       pushed: 0,
       failed: 0,
       lastError: "لم يُضبط رابط إرسال ولا يوجد اتصال بالخادم — عيّن الرابط في الإعدادات أو سجّل الدخول عبر الشبكة ثم أعد الإرسال",
     };
   }
-  const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []).filter((t) => t.driver_username === driverUsername && t.status === "completed" && !t.synced_at);
+  const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []).filter((t) => t.driver_username === driverUsername && t.status === "completed" && !t.synced_at && t.passengers.length > 0);
   let pushed = 0;
   let failed = 0;
   let lastError: string | undefined;
@@ -1104,7 +1105,7 @@ async function runSync(driverUsername: string): Promise<SyncResult> {
       lastError = errors.length ? errors.join(" و") : "تعذر الإرسال";
     }
   }
-  const pending = listLocalTrips(driverUsername).filter((t) => t.status === "completed" && !t.synced_at).length;
+  const pending = listLocalTrips(driverUsername).filter((t) => t.status === "completed" && !t.synced_at && t.passengers.length > 0).length;
   const configRec = getConfig();
   configRec.last_sync_at = new Date().toISOString();
   saveConfig(configRec);
@@ -1155,5 +1156,5 @@ export async function autoPushPending(driverUsername: string): Promise<number> {
 }
 
 export function pendingSyncCount(driverUsername: string): number {
-  return tripsForDriver(driverUsername).filter((t) => t.status === "completed" && !t.synced_at).length;
+  return tripsForDriver(driverUsername).filter((t) => t.status === "completed" && !t.synced_at && t.passengers.length > 0).length;
 }

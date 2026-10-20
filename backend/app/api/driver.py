@@ -225,6 +225,8 @@ def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRo
         if same:
             db.commit()
             return {"ok": True, "report_id": dup.id, "duplicate": True, "message": "التقرير موجود مسبقاً"}
+    if not employees:
+        raise HTTPException(400, "لا يمكن ترحيل رحلة فعلية بدون ركّاب")
     report = TripReport(
         driver_id=user.id,
         driver_username=user.username,
@@ -266,6 +268,8 @@ def transfer(trip_id: int, user: User = Depends(require_roles(UserRole.driver)),
     can_access_trip(user, trip)
     if trip.status not in (TripStatus.completed, TripStatus.transferred):
         raise HTTPException(400, "لا يمكن ترحيل الرحلة قبل إكمالها")
+    if trip.employee_count <= 0:
+        raise HTTPException(400, "لا يمكن ترحيل رحلة فعلية بدون ركّاب")
     log = transfer_trip(db, trip)
     if log.status.value == "success":
         trip.status = TripStatus.transferred

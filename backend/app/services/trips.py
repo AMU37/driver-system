@@ -126,6 +126,8 @@ def complete_trip(db: Session, user: User, trip: Trip) -> Trip:
     can_access_trip(user, trip)
     if trip.status not in (TripStatus.started, TripStatus.boarding):
         raise HTTPException(400, "لا يمكن إكمال الرحلة في حالتها الحالية")
+    if trip.employee_count <= 0:
+        raise HTTPException(400, "لا يمكن إكمال رحلة فعلية بدون ركّاب")
     trip.status = TripStatus.completed
     trip.completed_at = now_utc()
     log_action(db, user.id, "trip_completed", "trip", str(trip.id), {"employee_count": trip.employee_count})

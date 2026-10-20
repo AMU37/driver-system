@@ -206,10 +206,15 @@ export default function TripClient({ id }: { id?: string | null }) {
   async function complete() {
     const user = currentUser();
     if (!trip || !user) return;
+    if (!trip.passengers.length) {
+      setError("لا يمكن إكمال الرحلة بدون ركّاب — أضف الصاعدين أولاً");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       const t = completeLocalTrip(trip.id, user.username);
+      if (!t) { setError("تعذر إكمال الرحلة — حاول مرة أخرى"); return; }
       refresh(t);
       const canSend = isOnline() && (!!getConfig().power_automate_url.trim() || !!window.localStorage.getItem("access_token"));
       setMsg(canSend

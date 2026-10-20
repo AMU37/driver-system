@@ -77,6 +77,51 @@ export function isNearbyHousing(housing: unknown): boolean {
   });
 }
 
+/** تصنيف النقل المُطبَّق: يُشتق من نوع الخدمة والسكن بصرف النظر عن القيمة المخزّنة. */
+export const DAILY_TRANSPORT_TYPE = "نقل يومي";
+export const NO_TRANSPORT_TYPE = "لا يوجد نقل";
+
+export function effectiveTransportType(
+  employee: { housing_location?: unknown; transport_type?: unknown; service_type?: unknown } | null | undefined,
+): string {
+  if (!employee) return "";
+  // نوع الخدمة «أخرى»: لا نقل إطلاقاً (الأولوية على السكن القريب).
+  if (isOtherServiceType(employee.service_type)) return NO_TRANSPORT_TYPE;
+  if (isNearbyHousing(employee.housing_location)) return DAILY_TRANSPORT_TYPE;
+  return String(employee.transport_type ?? "").trim();
+}
+
+/**
+ * قرى قريبة يُنقل سكانها عبر «الدينات» (وليس الباصات)؛
+ * لذا تُستبعد خطط نقلهم من حساب «الرحلات المفترضة» للباص.
+ */
+export const DYNA_SERVED_HOUSINGS: string[] = ["الولي", "الضبرة", "الزحيفي"];
+
+/** هل سكن الموظف في إحدى القرى التي تُخدم بالدينات (لا تدخل في الرحلات المفترضة للباص)؟ */
+export function isDynaServedHousing(housing: unknown): boolean {
+  const h = normalizeArabic(housing);
+  if (!h) return false;
+  return DYNA_SERVED_HOUSINGS.some((name) => {
+    const n = normalizeArabic(name);
+    return !!n && h.includes(n);
+  });
+}
+
+/** نوع الخدمة «نقل» فقط (بلا سكن): يُنقل صاحبه يومياً (قادم ومغادر) في الأنظمة الأسبوعية. */
+export function isTransportOnlyService(service: unknown): boolean {
+  return normalizeArabic(service) === "نقل";
+}
+
+/** نوع الخدمة «أخرى»: لا يدخل صاحبه في خطط النقل إطلاقاً. */
+export function isOtherServiceType(service: unknown): boolean {
+  return normalizeArabic(service) === "اخري";
+}
+
+/** هل يُستبعد الموظف من خطط النقل تماماً (نوع الخدمة «أخرى»)؟ */
+export function isExcludedFromTransport(employee: { service_type?: unknown } | null | undefined): boolean {
+  return isOtherServiceType(employee?.service_type);
+}
+
 function dayIndexFromParts(y: number, m: number, d: number): number {
   return Math.round(Date.UTC(y, m - 1, d) / DAY_MS);
 }
@@ -148,12 +193,143 @@ export function computeCycle(
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* النظام الأسبوعي (مجموع أيام العمل والراحة = 7)                       */
+/* ------------------------------------------------------------------ */
+
+/** رقم يوم الأسبوع من قيمة تاريخ (0=الأحد … 6=السبت). */
+function weekdayOf(value?: string | Date | null): number | null {
+  const di = toDayIndex(value);
+  if (di === null) return null;
+  return (((di + 4) % 7) + 7) % 7;
+}
+
+// أسماء أيام الأسبوع مُبسّطة (بعد normalizeArabic). الترتيب يمنع التداخل.
+const WEEKDAY_TOKENS: Array<[string, number]> = [
+  ["اربعاء", 3],
+  ["ثلاثاء", 2],
+  ["اثنين", 1],
+  ["خميس", 4],
+  ["سبت", 6],
+  ["احد", 0],
+  ["جمعه", 5],
+];
+
+/** كل مواضع ذكر أيام الأسبوع داخل نص مُبسّط، مرتّبة تصاعدياً. */
+function weekdayMentions(text: string): Array<{ day: number; pos: number }> {
+  const out: Array<{ day: number; pos: number }> = [];
+  for (const [token, day] of WEEKDAY_TOKENS) {
+    let from = 0;
+    for (;;) {
+      const p = text.indexOf(token, from);
+      if (p < 0) break;
+      out.push({ day, pos: p });
+      from = p + token.length;
+    }
+  }
+  return out.sort((a, b) => a.pos - b.pos);
+}
+
+/**
+ * أيام العمل الأسبوعية من نوع الدوام (وصفه النصي) مرتّبة حسب تسلسل الدورة،
+ * أو null إذا تعذّر التحليل. يُغطّي الصيغتين: النطاق «من السبت - الخميس»
+ * والقائمة «سبت واحد واربعاء وخميس دوام …».
+ * الترتيب مهم لتحديد أول يوم عمل (قادم) وآخر يوم عمل (مغادر).
+ */
+export function weeklyWorkOrder(workDays: unknown, scheduleDesc: unknown): number[] | null {
+  const wd = toInt(workDays);
+  const text = normalizeArabic(String(scheduleDesc ?? "")).replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || wd === null || wd < 1) return null;
+  const dash = text.search(/[-–—/]/);
+  const hasRange = /من/.test(text) && dash >= 0;
+  const mentions = weekdayMentions(text);
+  if (!mentions.length) return null;
+  let order: number[];
+  if (hasRange) {
+    // «من السبت - الخميس» ⇒ من أول يوم إلى آخر يوم (مع الالتفاف على نهاية الأسبوع).
+    const start = mentions[0].day;
+    const end = mentions[1] ? mentions[1].day : start;
+    order = [];
+    let d = start;
+    for (let i = 0; i < 7; i++) {
+      order.push(d);
+      if (d === end) break;
+      d = (d + 1) % 7;
+    }
+  } else {
+    // قائمة صريحة: أيام قسم «الدوام» فقط (قبل أول فاصل أو قبل كلمة «إجازة»).
+    const aj = text.indexOf("اجازه");
+    const cut = Math.min(dash < 0 ? text.length : dash, aj < 0 ? text.length : aj);
+    const work = mentions.filter((m) => m.pos < cut);
+    order = Array.from(new Set((work.length ? work : mentions).map((m) => m.day)));
+  }
+  // يجب أن يطابق عدد أيام العمل المذكور؛ وإلا نرجع للنموذج الاحتياطي (أمان).
+  return order.length === wd ? order : null;
+}
+
+/** أيام العمل الأسبوعية كمجموعة، أو null إذا تعذّر التحليل. */
+export function weeklyWorkdays(workDays: unknown, scheduleDesc: unknown): Set<number> | null {
+  const order = weeklyWorkOrder(workDays, scheduleDesc);
+  return order ? new Set(order) : null;
+}
+
 /** حالة دورة موظف (من سجل الموظف المستورد) على تاريخ معيّن. */
 export function employeeCycle(
-  employee: { first_work_day?: string | null; work_days?: unknown; rest_days?: unknown; housing_location?: string | null } | null | undefined,
+  employee: {
+    first_work_day?: string | null;
+    work_days?: unknown;
+    rest_days?: unknown;
+    housing_location?: string | null;
+    work_schedule?: string | null;
+    schedule_desc?: string | null;
+    service_type?: unknown;
+  } | null | undefined,
   targetDate: string | Date,
 ): CycleInfo | null {
   if (!employee) return null;
+  const wd = toInt(employee.work_days);
+  const rd = toInt(employee.rest_days);
+  // النظام الأسبوعي (المجموع = 7): تُحدَّد أيام العمل من نوع الدوام (أيام الأسبوع).
+  if (wd !== null && rd !== null && wd >= 1 && rd >= 1 && wd + rd === 7) {
+    const order = weeklyWorkOrder(wd, employee.schedule_desc);
+    if (order) {
+      const dow = weekdayOf(targetDate);
+      if (dow === null) return null;
+      const idx = order.indexOf(dow);
+      if (idx < 0) {
+        // يوم راحة أسبوعي ⇒ إجازة.
+        return {
+          status: "vacation",
+          label: META.vacation.label,
+          badge: META.vacation.badge,
+          isWorkDay: false,
+          positionInCycle: dow,
+          cycleLen: 7,
+          workDays: wd,
+          restDays: rd,
+        };
+      }
+      // «النقل اليومي» لسكان المواقع القريبة أو نوع الخدمة «نقل» (بلا سكن) فقط،
+      // أما «سكن/نقل-سكن» فرحلتان: قادم أول يوم عمل، ومغادر آخر يوم عمل، وما بينهما مداوم.
+      const dailyPerson = isNearbyHousing(employee.housing_location) || isTransportOnlyService(employee.service_type);
+      let status: CycleStatus;
+      if (dailyPerson || order.length === 1) status = "daily";
+      else if (idx === 0) status = "arriving";
+      else if (idx === order.length - 1) status = "departing";
+      else status = "working";
+      const meta = META[status];
+      return {
+        status,
+        label: meta.label,
+        badge: meta.badge,
+        isWorkDay: true,
+        positionInCycle: dow,
+        cycleLen: 7,
+        workDays: wd,
+        restDays: rd,
+      };
+    }
+  }
   const base = computeCycle(employee.first_work_day, employee.work_days, employee.rest_days, targetDate);
   if (!base) return null;
   // سكان المواقع القريبة: في أيام عملهم تُعامل حالتهم «نقل يومي» (قادم ومغادر) بكافة أنواع الدوام.

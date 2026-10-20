@@ -84,6 +84,48 @@ _FIELDS = [
 MAX_IMPORT_ROWS = 50000
 MAX_FIELD_LEN = 200
 
+# مواقع سكن قريبة من الشركة: تصنيف نقلها «نقل يومي» بصرف النظر عن القيمة المستوردة.
+NEARBY_DAILY_HOUSINGS = ("الصليف", "الولي", "الضبرة", "الضبره", "الزحيفي")
+DAILY_TRANSPORT_TYPE = "نقل يومي"
+# نوع الخدمة «أخرى»: لا نقل إطلاقاً ⇒ تصنيف «لا يوجد نقل».
+NO_TRANSPORT_TYPE = "لا يوجد نقل"
+
+
+def _norm_arabic(value) -> str:
+    """تبسيط نص عربي للمقارنة (إزالة المسافات والتشكيل وتوحيد الألف/التاء/الياء)."""
+    text = str(value or "")
+    for ch in (" ", "\t", "\n", "\r", "\u0640", "\u064b", "\u064c", "\u064d", "\u064e", "\u064f", "\u0650", "\u0651", "\u0652"):
+        text = text.replace(ch, "")
+    for src, dst in (("أ", "ا"), ("إ", "ا"), ("آ", "ا"), ("ٱ", "ا"), ("ة", "ه"), ("ى", "ي")):
+        text = text.replace(src, dst)
+    return text
+
+
+def is_nearby_housing(housing) -> bool:
+    normalized = _norm_arabic(housing)
+    if not normalized:
+        return False
+    return any(_norm_arabic(name) in normalized for name in NEARBY_DAILY_HOUSINGS)
+
+
+def is_other_service(service) -> bool:
+    """نوع الخدمة «أخرى»: لا يدخل صاحبه في النقل إطلاقاً."""
+    return _norm_arabic(service) == "اخري"
+
+
+def effective_transport_type(transport_type, housing_location, service_type=None):
+    """تصنيف النقل الفعّال للموظف:
+    - نوع الخدمة «أخرى» ⇒ «لا يوجد نقل» (الأولوية).
+    - سكّان المواقع القريبة (الولي/الزحيفي/الضبرة/الصليف) ⇒ «نقل يومي».
+    - وإلا تُبقى القيمة المخزّنة كما هي.
+    """
+    if is_other_service(service_type):
+        return NO_TRANSPORT_TYPE
+    if is_nearby_housing(housing_location):
+        return DAILY_TRANSPORT_TYPE
+    return transport_type
+
+
 _NUMBER_FIELDS = {"work_days", "rest_days", "cycle_day_today", "cycle_day_tomorrow"}
 
 
@@ -229,7 +271,11 @@ def import_employee_rows(db: Session, rows: list[dict]) -> dict:
         employee.departure_time = _clean(row.get("departure_time")) or employee.departure_time
         employee.gender = _clean(row.get("gender")) or employee.gender
         employee.service_type = _clean(row.get("service_type")) or employee.service_type
-        employee.transport_type = _clean(row.get("transport_type")) or employee.transport_type
+        employee.transport_type = effective_transport_type(
+            _clean(row.get("transport_type")) or employee.transport_type,
+            employee.housing_location,
+            employee.service_type,
+        )
         employee.base_status_today = _clean(row.get("base_status_today")) or employee.base_status_today
         employee.route_name = _clean(row.get("route_name")) or employee.route_name
         for field in _NUMBER_FIELDS:

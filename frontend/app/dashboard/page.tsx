@@ -80,6 +80,10 @@ export default function DashboardPage() {
     if (!user) return;
     setMsg("");
     setError("");
+    if (!t.passengers.length) {
+      setFormErr("لا يمكن إكمال الرحلة بدون ركّاب — أضف الصاعدين أولاً");
+      return;
+    }
     try {
       const done = completeLocalTrip(t.id, user.username);
       if (!done) {

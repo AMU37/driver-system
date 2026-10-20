@@ -1,4 +1,4 @@
-import { employeeCycle, matchesTripDirection, toDayIndex } from "./cycle";
+import { employeeCycle, isDynaServedHousing, isExcludedFromTransport, matchesTripDirection, toDayIndex } from "./cycle";
 import { normalizeTripType, type TripType } from "./offlineStore";
 import { reportTripOf } from "./export";
 
@@ -43,7 +43,8 @@ export const EMPTY_TOTALS: Totals = { planned: 0, actualTrips: 0, actualDepartin
 /* ------------------------------------------------------------------ */
 
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function addDaysIso(day: string, n: number): string {
@@ -192,6 +193,26 @@ export function firstBoardedTripMap(reports: any[], day: string): Map<string, st
 /* الرحلات المفترضة (من خطة دوام الموظفين ÷ سعة الباص)                  */
 /* ------------------------------------------------------------------ */
 
+/** خطوط الباص المعتمدة في الرحلات المفترضة (نفس آلية جدول النظرة السريعة). */
+export const PLANNED_BUS_LINES: string[] = ["الصليف", "الحديدة"];
+
+/** تبسيط نصي عربي لاسم السكن (إزالة المسافات والتشكيل وتوحيد الألف/التاء/الياء). */
+function normalizeHousing(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\s+/g, "")
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+}
+
+/** هل يقع سكن الموظف على خط الباص المحدد (اسم السكن يحوي اسم الخط)؟ */
+export function housingMatchesLine(housing: unknown, line: string): boolean {
+  const h = normalizeHousing(housing);
+  const l = normalizeHousing(line);
+  return !!l && h.includes(l);
+}
+
 function directionsOf(filter: DirectionFilter): Array<"arriving" | "departing"> {
   if (filter === "arriving") return ["arriving"];
   if (filter === "departing") return ["departing"];
@@ -213,6 +234,8 @@ export function plannedTripsForDay(
     let n = 0;
     for (const emp of employees) {
       if (emp?.is_active === false) continue;
+      if (isDynaServedHousing(emp?.housing_location)) continue;
+      if (isExcludedFromTransport(emp)) continue;
       if (groupFilter && !groupFilter(emp)) continue;
       const cycle = employeeCycle(emp, day);
       if (!cycle) continue;
@@ -236,6 +259,8 @@ export function plannedBoardersForDay(
   for (const dir of wanted) {
     for (const emp of employees) {
       if (emp?.is_active === false) continue;
+      if (isDynaServedHousing(emp?.housing_location)) continue;
+      if (isExcludedFromTransport(emp)) continue;
       if (groupFilter && !groupFilter(emp)) continue;
       const cycle = employeeCycle(emp, day);
       if (!cycle) continue;
@@ -258,6 +283,8 @@ export function plannedHeadcountForDay(
   for (const dir of wanted) {
     for (const emp of employees) {
       if (emp?.is_active === false) continue;
+      if (isDynaServedHousing(emp?.housing_location)) continue;
+      if (isExcludedFromTransport(emp)) continue;
       if (groupFilter && !groupFilter(emp)) continue;
       const cycle = employeeCycle(emp, day);
       if (!cycle) continue;
@@ -431,9 +458,25 @@ export function computeAnalytics(args: {
   const { employees, reports, filters } = args;
   const employeesByCode = new Map<string, any>();
   for (const e of employees) employeesByCode.set(String(e.employee_code), e);
-  const housingFilter = filters.housing
-    ? (emp: any) => String(emp?.housing_location ?? "").trim() === filters.housing
-    : undefined;
+
+  // الرحلات المفترضة = مجموع (لكل خط باص على حدة) المتوقع صعوده ÷ سعة الباص — تماماً كجدول النظرة السريعة.
+  const plannedForDay = (day: string): { pa: number; pd: number } => {
+    if (filters.housing) {
+      const f = (emp: any) => housingMatchesLine(emp?.housing_location, filters.housing);
+      return {
+        pa: plannedTripsForDay(employees, day, "arriving", filters.capacity, f),
+        pd: plannedTripsForDay(employees, day, "departing", filters.capacity, f),
+      };
+    }
+    let pa = 0;
+    let pd = 0;
+    for (const line of PLANNED_BUS_LINES) {
+      const f = (emp: any) => housingMatchesLine(emp?.housing_location, line);
+      pa += plannedTripsForDay(employees, day, "arriving", filters.capacity, f);
+      pd += plannedTripsForDay(employees, day, "departing", filters.capacity, f);
+    }
+    return { pa, pd };
+  };
 
   const days = daysInRange(filters.from, filters.to);
   const buckets: Bucket[] = [];
@@ -458,8 +501,7 @@ export function computeAnalytics(args: {
       index.set(key, bucket);
       buckets.push(bucket);
     }
-    const pd = plannedTripsForDay(employees, day, "departing", filters.capacity, housingFilter);
-    const pa = plannedTripsForDay(employees, day, "arriving", filters.capacity, housingFilter);
+    const { pa, pd } = plannedForDay(day);
     bucket.plannedDeparting += pd;
     bucket.plannedArriving += pa;
     bucket.planned += filters.direction === "arriving" ? pa : filters.direction === "departing" ? pd : pd + pa;
@@ -483,8 +525,7 @@ export function computeAnalytics(args: {
   const prevAnalyzed = analyzeReports(reports, prevFrom, prevTo, filters, employeesByCode);
   const previous: Totals = { ...prevAnalyzed.totals };
   previous.planned = daysInRange(prevFrom, prevTo).reduce((sum, day) => {
-    const pd = plannedTripsForDay(employees, day, "departing", filters.capacity, housingFilter);
-    const pa = plannedTripsForDay(employees, day, "arriving", filters.capacity, housingFilter);
+    const { pa, pd } = plannedForDay(day);
     return sum + (filters.direction === "arriving" ? pa : filters.direction === "departing" ? pd : pd + pa);
   }, 0);
 

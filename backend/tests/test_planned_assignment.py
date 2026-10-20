@@ -40,7 +40,7 @@ def test_create_plan_assigns_employees():
         db.commit()
         db.close()
 
-        login = client.post("/api/auth/login", json={"username": "admin", "password": "Admin@12345"})
+        login = client.post("/api/auth/login", json={"username": "admin", "password": "Ali@12345"})
         assert login.status_code == 200
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 

@@ -17,6 +17,7 @@ const driverItems = [
 ] as const;
 
 const adminItems = [
+  ["/admin?tab=dashboard", "شاشة العرض", ChartColumn],
   ["/admin", "إدارة النظام", ShieldCheck],
   ["/settings", "الإعدادات", Settings],
   ["/about", "الدليل", BookOpen]
@@ -63,7 +64,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="brand-mini"><BusFront size={20}/></div><div><strong>رحلات الموظفين</strong><small>Driver System V1.0</small></div></div>
         <nav>
-          {nav.map(([href, label, Icon]) => <a key={href} href={routePath(href)} className={pathname === href || pathname.startsWith(href + "/") ? "nav-link active" : "nav-link"}><Icon size={19}/><span>{label}</span></a>)}
+          {nav.map(([href, label, Icon]) => {
+            const [base, query] = href.split("?");
+            const pathMatch = pathname === base || pathname.startsWith(base + "/");
+            const search = typeof window !== "undefined" ? window.location.search : "";
+            const active = pathMatch && (query ? search.includes(query) : base === "/admin" ? !search.includes("tab=") : true);
+            return <a key={href} href={routePath(href)} className={active ? "nav-link active" : "nav-link"}><Icon size={19}/><span>{label}</span></a>;
+          })}
         </nav>
         <div className="sidebar-footer"><div className="user-chip"><div className="avatar"><UserRound size={18}/></div><div><strong>{user?.full_name || "المستخدم"}</strong><small>{roleLabel(user?.role)}</small></div></div><button className="logout-link" onClick={() => { logout(); clearLocalSession(); window.location.assign("/"); }}><LogOut size={18}/>خروج</button></div>
       </aside>

@@ -13,13 +13,14 @@ import {
   plannedHeadcountForDay,
   plannedTripsForDay,
   reportTripDate,
+  reportRouteName,
   reportType,
   routeMatchesHousing,
   todayIso,
   violationKindId,
   type ViolationKind,
 } from "@/lib/analytics";
-import { reportTripOf, printReportSections, downloadSectionsXls, type ReportSection } from "@/lib/export";
+import { reportTripOf, purposeLabelOf, printReportSections, downloadSectionsXls, type ReportSection } from "@/lib/export";
 import { employeeCycle } from "@/lib/cycle";
 import { currentUser } from "@/lib/authGuard";
 import { getCachedSnapshot, loadSnapshot, syncSnapshotFromServer } from "@/lib/offlineStore";
@@ -42,6 +43,19 @@ function lineMatches(value: unknown, line: string): boolean {
   const l = norm(line);
   return !!l && v.includes(l);
 }
+
+// اسم الخط يحمل اسم المدينة؛ تُصحّح الأسماء السابقة (أحياء/مواقع) إلى المدينة الصحيحة.
+const ROUTE_DISTRICT_LINE: Array<[string, string]> = [
+  ["صليف", "الصليف"],
+  ["حديده", "الحديدة"],
+  ["حوك", "الحديدة"],
+  ["ميناء", "الحديدة"],
+  ["شمسان", "الحديدة"],
+  ["ثلاثين", "الحديدة"],
+  ["جمال", "الحديدة"],
+  ["حكيمي", "الحديدة"],
+  ["ضبره", "الحديدة"],
+];
 
 function pickSystemCapacity(buses: any[]): number {
   const caps = (buses || [])
@@ -99,7 +113,7 @@ type LineStat = {
 };
 
 type ViolType = { kind: ViolationKind; count: number };
-type ViolEmployee = { name: string; housing: string; count: number };
+type ViolEmployee = { name: string; housing: string; count: number; company?: string; department?: string; purpose?: string; schedule?: string; cycle?: string; };
 
 type Stat = {
   lines: LineStat[];
@@ -208,7 +222,26 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
     };
     const tripNoOf = (r: any) => String(r?.trip_number || r?.raw?.trip?.trip_id || "—").trim() || "؟";
 
-    const lines: LineStat[] = LINES.map((line) => {
+    const lineOfTrip = (r: any): string | null => {
+      const direct = LINES.find((l) => routeMatchesHousing(r, l));
+      if (direct) return direct;
+      const text = norm(
+        [
+          reportRouteName(r),
+          r?.origin,
+          r?.destination,
+          r?.raw?.trip?.origin,
+          r?.raw?.trip?.destination,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      for (const [key, line] of ROUTE_DISTRICT_LINE) if (text.includes(key)) return line;
+      return null;
+    };
+
+    const acc = new Map<string, LineStat>();
+    for (const line of LINES) {
       const filter = (emp: any) => lineMatches(emp?.housing_location, line);
       let pa = 0;
       let pd = 0;
@@ -220,74 +253,64 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
         peArr += plannedHeadcountForDay(empList, day, "arriving", filter);
         peDep += plannedHeadcountForDay(empList, day, "departing", filter);
       }
-      let aa = 0;
-      let ad = 0;
-      let bArr = 0;
-      let bDep = 0;
-      let vArr = 0;
-      let vDep = 0;
-      for (const r of reports) {
-        const rd = dayOfValue(reportTripDate(r));
-        if (!rd || rd < lo || rd > hi) continue;
-        const isArr = reportType(r) === "قادم";
-        const dir = isArr ? "arriving" : "departing";
-        const viaRoute = routeMatchesHousing(r, line);
-        const { employees: ps } = reportTripOf(r);
-        const counted = viaRoute ? ps : ps.filter((p: any) => lineMatches(p?.housing_location, line));
-        if (!viaRoute && counted.length === 0) continue;
-        if (isArr) {
-          aa += 1;
-          bArr += counted.length;
-        } else {
-          ad += 1;
-          bDep += counted.length;
-        }
-        const tripNo = tripNoOf(r);
-        for (const p of counted) {
-          const code = p?.employee_code ? String(p.employee_code).trim() : "";
-          const emp = code ? empMap.get(code) ?? null : null;
-          const status = passengerStatus(p, emp, rd, dir);
-          const kind = violationKindId(status, emp ? employeeCycle(emp, rd)?.status ?? null : null, dupOf(rd, code, dir, tripNo));
-          if (kind) {
-            if (isArr) vArr += 1;
-            else vDep += 1;
-          }
-        }
-      }
-      return { line, pa, pd, aa, ad, bArr, bDep, peArr, peDep, vArr, vDep };
-    });
+      acc.set(line, { line, pa, pd, aa: 0, ad: 0, bArr: 0, bDep: 0, peArr, peDep, vArr: 0, vDep: 0 });
+    }
 
     const kindCount = new Map<ViolationKind, number>();
     const empViol = new Map<string, ViolEmployee>();
     let totalViol = 0;
+    const seenTrips = new Set<string>();
     for (const r of reports) {
       const rd = dayOfValue(reportTripDate(r));
       if (!rd || rd < lo || rd > hi) continue;
-      const viaRoute = LINES.some((l) => routeMatchesHousing(r, l));
-      const { employees: ps } = reportTripOf(r);
-      const counted = viaRoute ? ps : ps.filter((p: any) => LINES.some((l) => lineMatches(p?.housing_location, l)));
-      if (!viaRoute && counted.length === 0) continue;
+      const line = lineOfTrip(r);
+      if (!line) continue;
+      const key = String(r?.trip_number || r?.id || "").trim();
+      if (key && seenTrips.has(key)) continue;
+      if (key) seenTrips.add(key);
+      const st = acc.get(line)!;
       const isArr = reportType(r) === "قادم";
       const dir = isArr ? "arriving" : "departing";
       const tripNo = tripNoOf(r);
-      for (const p of counted) {
+      const { employees: ps } = reportTripOf(r);
+      if (isArr) {
+        st.aa += 1;
+        st.bArr += ps.length;
+      } else {
+        st.ad += 1;
+        st.bDep += ps.length;
+      }
+      for (const p of ps) {
         const code = p?.employee_code ? String(p.employee_code).trim() : "";
         const emp = code ? empMap.get(code) ?? null : null;
         const status = passengerStatus(p, emp, rd, dir);
-        const kind = violationKindId(status, emp ? employeeCycle(emp, rd)?.status ?? null : null, dupOf(rd, code, dir, tripNo));
+        const cyc = emp ? employeeCycle(emp, rd) : null;
+        const kind = violationKindId(status, cyc?.status ?? null, dupOf(rd, code, dir, tripNo));
         if (!kind) continue;
+        if (isArr) st.vArr += 1;
+        else st.vDep += 1;
         kindCount.set(kind, (kindCount.get(kind) || 0) + 1);
         const k = code || String(p?.name || "?");
         const cur = empViol.get(k) || {
-          name: emp?.name || p?.name || "—",
-          housing: emp?.housing_location || p?.housing_location || "—",
+          name: emp?.name || p?.name || p?.name_snapshot || "?",
+          housing: emp?.housing_location || p?.housing_location || p?.housing_location_snapshot || "?",
+          company: emp?.company_name || p?.company_snapshot || "",
+          department: emp?.department_name || p?.department_snapshot || "",
+          purpose: emp ? "" : p?.visit_purpose || "",
+          schedule: emp ? (emp.schedule_desc || emp.work_schedule || "") : "",
+          cycle: cyc?.label || "",
           count: 0,
         };
+        if (emp) {
+          cur.schedule = emp.schedule_desc || emp.work_schedule || "";
+          if (cyc?.label) cur.cycle = cyc.label;
+        }
         cur.count += 1;
         empViol.set(k, cur);
         totalViol += 1;
       }
     }
+    const lines: LineStat[] = LINES.map((l) => acc.get(l)!);
     const types: ViolType[] = VIOLATION_KIND_ORDER.map((kind) => ({ kind, count: kindCount.get(kind) || 0 })).filter((x) => x.count > 0);
     const topViolators = Array.from(empViol.values()).sort((a, b) => b.count - a.count).slice(0, 10);
 
@@ -365,7 +388,7 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
       },
       {
         heading: `الرحلات والصاعدون والمخالفون (${isSingle ? periodLabel : `${fmt(lo)} ← ${fmt(hi)}`})`,
-        headers: ["الخط (السكن)", "مفترضة قادم", "مفترضة مغادر", "فعلية قادم", "فعلية مغادر", "صاعدون قادمون", "صاعدون مغادرون", "إجمالي الصاعدين", "مفترض قادمون", "مفترض مغادرون", "إجمالي المفترض", "مخالفون قادمون", "مخالفون مغادرون", "إجمالي المخالفين", "نسبة المخالفة %", "نسبة التغطية %"],
+        headers: ["الخط", "مفترضة قادم", "مفترضة مغادر", "فعلية قادم", "فعلية مغادر", "صاعدون قادمون", "صاعدون مغادرون", "إجمالي الصاعدين", "مفترض قادمون", "مفترض مغادرون", "إجمالي المفترض", "مخالفون قادمون", "مخالفون مغادرون", "إجمالي المخالفين", "نسبة المخالفة %", "نسبة التغطية %"],
         rows: [
           ...stat.lines.map((r) => {
             const tb = r.bArr + r.bDep;
@@ -388,10 +411,13 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
       },
       {
         heading: "أكثر الموظفين مخالفة",
-        headers: ["#", "الاسم", "السكن", "عدد المخالفات"],
+        headers: ["#", "الاسم", "السكن", "الشركة", "الإدارة", "الغرض", "نوع الدوام", "الحالة الدورية", "عدد المخالفات"],
         rows: stat.topViolators.length
-          ? stat.topViolators.map((v, i) => tr([i + 1, v.name, v.housing, v.count]))
-          : [tr(["لا توجد مخالفات", "", "", ""])],
+          ? stat.topViolators.map((v, i) => {
+              const purpose = v.purpose && v.purpose !== "employee" ? purposeLabelOf(v.purpose) : (v.company || v.department ? "" : "غير موظف");
+              return tr([i + 1, v.name, v.housing || "—", v.company || "—", v.department || "—", purpose || "—", v.schedule || "—", v.cycle || "—", v.count]);
+            })
+          : [tr(["لا توجد مخالفات", "", "", "", "", "", "", "", ""])],
       },
     ];
     return { title, meta, sections };
@@ -468,7 +494,7 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
           <table className="ov-table">
             <thead>
               <tr>
-                <th rowSpan={2} className="ov-line">الخط (السكن)</th>
+                <th rowSpan={2} className="ov-line">الخط</th>
                 <th colSpan={4} className="ov-day">الرحلات — {periodLabel}<small>{dayCount} يوم</small></th>
                 <th colSpan={3} className="ov-day">الصاعدون (فعلي)</th>
                 <th colSpan={3} className="ov-day">الموظفون المفترض</th>
@@ -539,7 +565,7 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
           <div className="table-scroll">
             <table className="ov-mini">
               <thead>
-                <tr><th>#</th><th>الاسم</th><th>السكن</th><th>المخالفات</th></tr>
+                <tr><th>#</th><th>الاسم</th><th>السكن</th><th>الشركة</th><th>الإدارة</th><th>الغرض</th><th>نوع الدوام</th><th>الحالة الدورية</th><th>المخالفات</th></tr>
               </thead>
               <tbody>
                 {stat.topViolators.length ? (
@@ -547,12 +573,17 @@ export default function TripsOverview({ reports, employees, buses }: Props) {
                     <tr key={`${v.name}-${i}`}>
                       <td>{NUM(i + 1)}</td>
                       <td className="ov-line">{v.name}</td>
-                      <td>{v.housing}</td>
+                      <td>{v.housing || "—"}</td>
+                      <td>{v.company || "—"}</td>
+                      <td>{v.department || "—"}</td>
+                      <td>{purposeLabelOf(v.purpose) !== "—" ? purposeLabelOf(v.purpose) : (v.company || v.department ? "—" : "غير موظف")}</td>
+                      <td className="ov-sched">{v.schedule || "—"}</td>
+                      <td>{v.cycle || "—"}</td>
                       <td className={v.count ? "ov-viol" : ""}>{NUM(v.count)}</td>
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={4} className="muted">لا توجد مخالفات</td></tr>
+                  <tr><td colSpan={9} className="muted">لا توجد مخالفات</td></tr>
                 )}
               </tbody>
             </table>
