@@ -99,7 +99,7 @@ export type LocalTrip = {
   synced_at?: string | null;
   last_error?: string | null;
 };
-export type OfflineUser = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string; permissions?: Record<string, boolean> | null };
+export type OfflineUser = { id: string; username: string; full_name: string; role: string; driver_code?: string | null; company_code: string; must_change_password?: boolean; permissions?: Record<string, boolean> | null };
 export type AppConfig = { power_automate_url: string; power_automate_key: string; server_url?: string; last_sync_at?: string | null };
 
 const KEY_SESSION = "ds_session";
@@ -182,7 +182,7 @@ export function isLocalPageHost(): boolean {
 export function backendBaseUrl(): string {
   // On a local development host always talk to the local backend, ignoring any
   // saved custom/remote server URL so local testing never hits production.
-  if (isLocalPageHost()) return window.location.origin;
+  if (isLocalPageHost()) return `http://${window.location.hostname}:8001`;
   const cfg = getConfig();
   const raw = (cfg.server_url || "").trim();
   if (raw) return normalizeBaseUrl(raw);
@@ -300,14 +300,14 @@ async function authorizedRequest(
 /* ---------- snapshot ---------- */
 let snapshotMem: Snapshot | null = null;
 
-/** يفضّل اللقطة الأحدث (أكثر موظفين ثم أحدث تاريخ بناء) — يمنع بقاء نسخة قديمة بعد تحديث التطبيق. */
+/** يفضّل اللقطة الأحدث (أحدث تاريخ بناء ثم أكثر موظفين) — يمنع بقاء نسخة قديمة بعد تحديث التطبيق. */
 function isNewerSnapshot(a: Snapshot, b: Snapshot): boolean {
-  const aEmp = a.counts?.employees ?? (Array.isArray(a.employees) ? a.employees.length : 0);
-  const bEmp = b.counts?.employees ?? (Array.isArray(b.employees) ? b.employees.length : 0);
-  if (aEmp !== bEmp) return aEmp > bEmp;
   const at = Date.parse(a.built_at || "") || 0;
   const bt = Date.parse(b.built_at || "") || 0;
-  return at > bt;
+  if (at !== bt) return at > bt;
+  const aEmp = a.counts?.employees ?? (Array.isArray(a.employees) ? a.employees.length : 0);
+  const bEmp = b.counts?.employees ?? (Array.isArray(b.employees) ? b.employees.length : 0);
+  return aEmp > bEmp;
 }
 
 export async function loadSnapshot(): Promise<Snapshot> {

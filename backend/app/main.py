@@ -16,7 +16,7 @@ from app.seed import seed_if_empty
 
 logger = logging.getLogger("uvicorn.error")
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.10"
 
 # Demo credentials seeded by seed.py — if detected in production the account is
 # locked until the password is changed.
@@ -55,6 +55,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Must-Change-Password"],
 )
 
 app.include_router(auth.router)
@@ -147,3 +148,86 @@ def static_site(path: str):
     if index.is_file():
         return FileResponse(index)
     return JSONResponse({"detail": "not found"}, status_code=404)# redeploy trigger v1.0.7
+
+# Local browser development CORS compatibility for the Driver Transport UI.
+# This middleware only changes CORS headers for the listed local dev origins.
+class _DriverLocalDevCORSMiddleware:
+    def __init__(self, app):
+        self.app = app
+        self.allowed_origins = {
+            "http://localhost:3333",
+            "http://127.0.0.1:3333",
+            "http://[::1]:3333",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        }
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_headers = {
+            key.lower(): value
+            for key, value in scope.get("headers", [])
+        }
+        origin = request_headers.get(b"origin", b"").decode("latin-1")
+
+        if origin not in self.allowed_origins:
+            await self.app(scope, receive, send)
+            return
+
+        if (
+            scope.get("method", "").upper() == "OPTIONS"
+            and b"access-control-request-method" in request_headers
+        ):
+            requested_headers = request_headers.get(
+                b"access-control-request-headers",
+                b"authorization,content-type",
+            )
+            await send({
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [
+                    (b"access-control-allow-origin", origin.encode("ascii")),
+                    (b"access-control-allow-credentials", b"true"),
+                    (b"access-control-allow-methods",
+                     b"GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+                    (b"access-control-allow-headers", requested_headers),
+                    (b"access-control-max-age", b"600"),
+                    (b"content-length", b"0"),
+                    (b"vary", b"Origin"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def send_with_local_cors(message):
+            if message.get("type") == "http.response.start":
+                cors_headers = {
+                    b"access-control-allow-origin",
+                    b"access-control-allow-credentials",
+                    b"access-control-allow-methods",
+                    b"access-control-allow-headers",
+                    b"access-control-max-age",
+                    b"access-control-expose-headers",
+                }
+                response_headers = [
+                    (key, value)
+                    for key, value in message.get("headers", [])
+                    if key.lower() not in cors_headers
+                ]
+                response_headers.extend([
+                    (b"access-control-allow-origin", origin.encode("ascii")),
+                    (b"access-control-allow-credentials", b"true"),
+                    (b"access-control-expose-headers", b"X-Must-Change-Password"),
+                    (b"vary", b"Origin"),
+                ])
+                message = {**message, "headers": response_headers}
+
+            await send(message)
+
+        await self.app(scope, receive, send_with_local_cors)
+
+
+app.add_middleware(_DriverLocalDevCORSMiddleware)

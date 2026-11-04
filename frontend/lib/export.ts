@@ -151,6 +151,23 @@ export function reportsToXlsText(reports: any[]): string {
   return lines.join("\r\n");
 }
 
+function isMobileBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+function triggerBlobDownload(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
 export function downloadContent(filename: string, content: string, mime: string) {
   if (isNativePlatform()) {
     // روابط blob:/data: لا تعمل في المتصفح الخارجي، فنسلّم الملف للتطبيق ليحفظه ويفتحه.
@@ -158,14 +175,21 @@ export function downloadContent(filename: string, content: string, mime: string)
     return;
   }
   const blob = new Blob(["\ufeff" + content], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 3000);
+  // متصفح الجوال: التنزيل المباشر قد يُحجب داخل WebView، فنعرض ورقة المشاركة
+  // (حفظ في الملفات / إرسال إلى Excel / واتساب) قبل الرجوع إلى التنزيل العادي.
+  const nav = typeof navigator !== "undefined" ? (navigator as Navigator & { canShare?: (d?: unknown) => boolean; share?: (d: unknown) => Promise<void> }) : null;
+  if (nav && isMobileBrowser() && typeof nav.share === "function" && typeof nav.canShare === "function") {
+    try {
+      const file = new File([blob], filename, { type: blob.type });
+      if (nav.canShare({ files: [file] })) {
+        nav.share({ files: [file], title: filename }).catch(() => triggerBlobDownload(filename, blob));
+        return;
+      }
+    } catch {
+      /* المتابعة إلى التنزيل العادي */
+    }
+  }
+  triggerBlobDownload(filename, blob);
 }
 
 /** واجهة أصلية حقنها MainActivity — لا علانية لها في نسخة المتصفح. */
@@ -207,15 +231,7 @@ function saveFileNative(filename: string, content: string, mime: string) {
   }
   if (typeof window !== "undefined") {
     // احتياطي: نافذة المتصفح المعتادة (تعمل على الويب)
-    const blob = new Blob(["\ufeff" + content], { type: `${mime};charset=utf-8` });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    triggerBlobDownload(filename, new Blob(["\ufeff" + content], { type: `${mime};charset=utf-8` }));
     return;
   }
   // نسخة أصلية بلا جسر: لا نفتح نافذة خارجية، نعرض المسار فقط
@@ -509,12 +525,13 @@ export function downloadTable(sheetName: string, filename: string, headers: stri
 export type ReportSection = { heading?: string; headers: string[]; rows: Array<Array<string | number>> };
 
 const SECTION_REPORT_CSS = `
+ @page{size:A4 landscape;margin:8mm}
  body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;margin:24px;color:#17202b}
  h1{font-size:20px;margin:0 0 6px;padding-inline-start:10px;border-inline-start:5px solid #1769e0;color:#0f2b52}
  .meta{color:#55606e;font-size:13px;margin-bottom:4px}
  h2{font-size:15px;margin:18px 0 6px;color:#0f2b52;padding-inline-start:8px;border-inline-start:4px solid #9cc0f5}
- table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
- th,td{border:1px solid #cfd6dd;padding:6px 8px;text-align:right}
+ table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:6px;table-layout:auto}
+ th,td{border:1px solid #cfd6dd;padding:4px 6px;text-align:right;white-space:normal;word-break:break-word;vertical-align:middle}
  th{background:#1769e0;color:#fff;font-weight:700;border-color:#1769e0}
  tbody tr.zebra td{background:#f4f7fb}
  td.t-good{background:#e8f6ef;color:#0b7c54;font-weight:700}
@@ -523,7 +540,8 @@ const SECTION_REPORT_CSS = `
  td.t-info{background:#eaf2ff;color:#1769e0;font-weight:700}
  thead{display:table-header-group}
  tr{page-break-inside:avoid}
- @media print{body{margin:10mm}}
+ *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ @media print{body{margin:8mm}}
 `;
 
 /** طباعة/حفظ PDF لتقرير من عدّة جداول مع عنوان وبيانات تعريفية ملوّنة. */

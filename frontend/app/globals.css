@@ -113,3 +113,29 @@ table{min-width:0}
 .ov-mini td.ov-line{text-align:right;font-weight:700}
 .ov-mini tr.ov-total td{background:#f7f9fc;color:var(--primary);font-weight:800}
 .ov-mini td.ov-viol{color:var(--danger);font-weight:800}
+.rate-summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px}
+.rate-summary-grid .table-card{border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}
+.sidebar-quick{display:grid;gap:5px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+.sidebar-quick-title{font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--muted);padding:0 13px}
+@media(max-width:1100px){.rate-summary-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.rate-summary-grid{grid-template-columns:1fr}.sidebar-quick{display:flex;gap:6px;overflow:auto;margin-top:10px;padding-top:10px}.sidebar-quick-title{display:none}.sidebar-quick .nav-link{white-space:nowrap}}
+
+/* ---- عرض الجوال: بطاقات بدل جدول عريض مقطوع الأعمدة ---- */
+.table-hint{display:none;font-size:11.5px;color:var(--muted);padding:8px 12px 0}
+@media(max-width:760px){
+  .table-hint{display:block}
+  .table-card .table-scroll.stack-scroll{overflow:visible;max-height:none !important}
+  table.table-stack{width:100%;min-width:0;border-collapse:separate;border-spacing:0}
+  table.table-stack thead{display:none}
+  table.table-stack tbody tr{display:block;margin:10px 10px 0;padding:4px 12px;border:1px solid var(--line);border-radius:13px;background:var(--surface);box-shadow:0 2px 8px rgba(20,35,55,.04)}
+  table.table-stack tbody tr:last-child{margin-bottom:10px}
+  table.table-stack tbody td{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;width:auto;border:0;border-bottom:1px dashed var(--line);padding:7px 0;white-space:normal;text-align:left;font-size:13px}
+  table.table-stack tbody td:last-child{border-bottom:0}
+  table.table-stack tbody td::before{content:attr(data-label);flex:0 0 auto;color:var(--muted);font-weight:700;font-size:12px;text-align:right}
+  table.table-stack tbody td:not([data-label])::before{content:none}
+  table.table-stack tbody td>:not(:first-child){text-align:left}
+  table.table-stack tbody td.stack-cell{display:flex}
+  table.table-stack tbody tr.empty-row{display:block;border:0;box-shadow:none;background:transparent}
+  table.table-stack tbody tr.empty-row td{display:block;text-align:center;border:0}
+  table.table-stack tbody tr.ov-total td{font-weight:800;color:var(--primary)}
+}

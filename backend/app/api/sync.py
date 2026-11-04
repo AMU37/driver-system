@@ -76,7 +76,7 @@ def sync_snapshot(user: User = Depends(get_current_user), db: Session = Depends(
             "id": r.id, "username": r.username, "full_name": r.full_name, "role": r.role,
             "driver_code": r.driver_code, "company_code": r.company_code,
         }
-        for r in db.execute(text("SELECT id, username, full_name, role, driver_code, company_code FROM users WHERE role IN ('driver', 'supervisor', 'admin') ORDER BY username"))
+        for r in db.execute(text("SELECT id, username, full_name, role, driver_code, company_code FROM users ORDER BY username"))
     ]
     assigned_by_plan: dict[int, list[dict]] = {}
     for r in db.execute(text(

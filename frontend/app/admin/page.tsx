@@ -21,7 +21,7 @@ import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType,
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
 import { downloadContent, downloadTable, downloadSectionsXls, openReportTripWhatsApp, openWhatsAppText, printTableReport, printReportSections, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText, type ReportSection } from "@/lib/export";
 import { effectiveTransportType, employeeCycle, isExcludedFromTransport, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
-import { VIOLATION_KIND_LABEL, VIOLATION_KIND_ORDER, violationKindId, type ViolationKind } from "@/lib/analytics";
+import { VIOLATION_KIND_LABEL, VIOLATION_KIND_ORDER, addDaysIso, daysInRange, violationKindId, type ViolationKind } from "@/lib/analytics";
 import { DRIVER_SCORE, TRIP_TIME_WINDOWS, evaluateDrivers, windowsLabel } from "@/lib/driverEval";
 import { effectivePermissions } from "@/lib/permissions";
 
@@ -38,6 +38,17 @@ const CYCLE_STATUS_OPTIONS: { value: CycleStatus | ""; label: string }[] = [
 ];
 
 const BOOL_OPTIONS = [{ value: true, label: "نشط" }, { value: false, label: "معطّل" }];
+
+/** فلاتر الفترات السريعة في تبويب «الموظفون الفعليون (الصاعدون)». */
+const ACTUAL_PRESETS: { key: string; label: string }[] = [
+  { key: "today", label: "اليوم" },
+  { key: "yesterday", label: "أمس" },
+  { key: "week", label: "آخر 7 أيام" },
+  { key: "30", label: "آخر 30 يوم" },
+  { key: "month", label: "هذا الشهر" },
+  { key: "lastmonth", label: "الشهر الماضي" },
+  { key: "all", label: "كل المدة" },
+];
 const YESNO = (v: any) => (v ? "نشط" : "معطّل");
 const DASH = (v: any) => v || "—";
 const ROLE_LABEL: Record<string, string> = { driver: "سائق", supervisor: "مشرف", admin: "مدير", viewer: "مستعرض" };
@@ -157,6 +168,8 @@ export type ActualRow = {
   route: string;
   tripNumber: string;
   tripType: TripType;
+  /** تاريخ يوم الرحلة/التقرير (ISO) — يظهر عند التصفية على أكثر من يوم. */
+  date: string;
   boardedAt: string;
   source: string;
   status: "match" | "violation" | "unknown" | "nonemp";
@@ -224,6 +237,7 @@ function actualRowsForDate(reports: any[], dateValue: string, employees: any[]):
         route,
         tripNumber,
         tripType: type,
+        date: dateValue,
         boardedAt: p.boarded_at || "",
         source: p.source || "",
         status,
@@ -280,7 +294,9 @@ export default function AdminPage() {
   const [dailyDate, setDailyDate] = useState<string>(todayIso());
   const [dailyLine, setDailyLine] = useState("");
   const [dailyOnlyDiff, setDailyOnlyDiff] = useState(false);
-  const [actualDate, setActualDate] = useState<string>(todayIso());
+  const [actualFrom, setActualFrom] = useState<string>(todayIso());
+  const [actualTo, setActualTo] = useState<string>(todayIso());
+  const [actualPreset, setActualPreset] = useState<string>("today");
   const [actualSearch, setActualSearch] = useState("");
   const [actualOnlyViolation, setActualOnlyViolation] = useState(false);
   const [actualType, setActualType] = useState("");
@@ -524,6 +540,17 @@ export default function AdminPage() {
     setLoading(false);
   }
   useEffect(() => { initialize(); }, []);
+
+  /** روابط القائمة الجانبية السريعة: ?action=backup | ?action=plan → فتح/تمرير للوحة المطلوبة. */
+  useEffect(() => {
+    const action = new URLSearchParams(window.location.search).get("action");
+    if (action !== "backup" && action !== "plan") return;
+    if (action === "plan") setPlanOpen(true);
+    const t = window.setTimeout(() => {
+      document.getElementById(action === "plan" ? "plan-panel" : "backup-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, []);
 
   function afterAction(message: string) {
     setMsg(message);
@@ -1018,6 +1045,20 @@ export default function AdminPage() {
     );
   })();
 
+  // قبل قراءة الجلسة (أثناء SSR وأول رسم) نعرض حالة تحميل محايدة:
+  // عرض شاشة «لا تملك صلاحية» هنا يجعل HTML الخادم مختلفاً عن العميل.
+  if (!me) {
+    return (
+      <AppShell>
+        <div className="form-panel" style={{ maxWidth: 560, margin: "60px auto", textAlign: "center", padding: 30 }}>
+          <div className="brand-mark" style={{ margin: "0 auto 15px" }}><RefreshCw size={26} /></div>
+          <h2 style={{ margin: "0 0 6px" }}>جارٍ التحقق من الجلسة…</h2>
+          <p className="muted">يتم تحميل صلاحيات حسابك.</p>
+        </div>
+      </AppShell>
+    );
+  }
+
   if (!perms.view) {
     return (
       <AppShell>
@@ -1060,7 +1101,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      <div className="form-panel">
+      <div className="form-panel" id="backup-panel">
         <div className="panel-title">
           <div>
             <ArchiveRestore size={22} />
@@ -1078,7 +1119,7 @@ export default function AdminPage() {
       </div>
 
       {perms.add && (
-      <div className="form-panel">
+      <div className="form-panel" id="plan-panel">
         <div className="panel-title">
           <div>
             <BusFront size={22} />
@@ -1839,10 +1880,54 @@ export default function AdminPage() {
       })()}
 
       {tab === "actual" && (() => {
-        const dateValue = actualDate || todayIso();
         const q = actualSearch.trim().toLowerCase();
-        const dayReports = reportsForDate(reports, dateValue);
-        const all = actualRowsForDate(reports, dateValue, allEmployees);
+        const fromIso = actualFrom || todayIso();
+        const toIso = actualTo || todayIso();
+        const fromIdx = toDayIndex(fromIso);
+        const toIdx = toDayIndex(toIso);
+        const swapped = fromIdx !== null && toIdx !== null && fromIdx > toIdx;
+        const lo = swapped ? toIso : fromIso;
+        const hi = swapped ? fromIso : toIso;
+        const loIdx = toDayIndex(lo);
+        const hiIdx = toDayIndex(hi);
+        const periodLabel = lo === hi ? lo : `من ${lo} إلى ${hi}`;
+        /** تقارير الرحلات التي وقعت داخل الفترة (من/إلى). */
+        const rangeReports = reports.filter((r) => {
+          const idx = toDayIndex(reportTripDateRaw(r));
+          return idx !== null && loIdx !== null && hiIdx !== null && idx >= loIdx && idx <= hiIdx;
+        });
+        const datesInRange = daysInRange(lo, hi, 400);
+        const all = datesInRange.flatMap((d) => actualRowsForDate(rangeReports, d, allEmployees));
+        const applyActualPreset = (key: string) => {
+          const t = todayIso();
+          let from = t;
+          let to = t;
+          if (key === "yesterday") { from = addDaysIso(t, -1); to = from; }
+          else if (key === "week") { from = addDaysIso(t, -6); }
+          else if (key === "30") { from = addDaysIso(t, -29); }
+          else if (key === "month") { from = `${t.slice(0, 7)}-01`; }
+          else if (key === "lastmonth") {
+            const lastIso = addDaysIso(`${t.slice(0, 7)}-01`, -1);
+            to = lastIso;
+            from = `${lastIso.slice(0, 7)}-01`;
+          } else if (key === "all") {
+            let loI: number | null = null;
+            let hiI: number | null = null;
+            for (const r of reports) {
+              const idx = toDayIndex(reportTripDateRaw(r));
+              if (idx === null) continue;
+              if (loI === null || idx < loI) loI = idx;
+              if (hiI === null || idx > hiI) hiI = idx;
+            }
+            if (loI !== null && hiI !== null) {
+              from = new Date(loI * 86400000).toISOString().slice(0, 10);
+              to = new Date(hiI * 86400000).toISOString().slice(0, 10);
+            }
+          }
+          setActualFrom(from);
+          setActualTo(to);
+          setActualPreset(key);
+        };
         const driverOptions = Array.from(new Set(all.map((r) => r.driver))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
         const busOptions = Array.from(new Set(all.map((r) => r.bus))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
         const housingOptions = Array.from(new Set(all.map((r) => r.housing))).filter((v) => v && v !== "—").sort((a, b) => a.localeCompare(b, "ar"));
@@ -1862,10 +1947,10 @@ export default function AdminPage() {
           r.note ||
           (r.status === "nonemp" ? "غير موظف" : r.status === "unknown" ? "غير مسجّل في الكشف" : "مخالف لخطة الدوام");
         const statusLabelOf = (r: ActualRow) => (r.status === "match" ? "حسب الخطة" : `مخالف — ${statusNoteOf(r)}`);
-        const exportHeaders = ["#", "الكود", "الاسم", "الخط (السكن)", "الإدارة", "نوع الدوام", "السائق", "الباص", "المسار", "الرحلة", "النوع", "وقت الصعود", "المطابقة", "الملاحظة"];
-        const exportRows = rows.map((r, i) => [i + 1, r.code || "", r.name || "", r.housing || "", r.department || "", r.schedule || "", r.driver, r.bus, r.route, r.tripNumber, r.tripType, r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "", statusLabelOf(r), statusNoteOf(r)]);
+        const exportHeaders = ["#", "الكود", "الاسم", "التاريخ", "الخط (السكن)", "الإدارة", "نوع الدوام", "السائق", "الباص", "المسار", "الرحلة", "النوع", "وقت الصعود", "المطابقة", "الملاحظة"];
+        const exportRows = rows.map((r, i) => [i + 1, r.code || "", r.name || "", r.date || "", r.housing || "", r.department || "", r.schedule || "", r.driver, r.bus, r.route, r.tripNumber, r.tripType, r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "", statusLabelOf(r), statusNoteOf(r)]);
         const actualTitle = "الموظفون الفعليون (الصاعدون)";
-        const actualSubtitle = `التاريخ: ${dateValue} · عدد الصاعدين: ${rows.length}`;
+        const actualSubtitle = `الفترة: ${periodLabel} · عدد الصاعدين: ${rows.length}`;
         const count = (s: ActualRow["status"]) => all.filter((r) => r.status === s).length;
         const dupCount = all.filter((r) => r.duplicate).length;
         const kindCount = new Map<ViolationKind, number>();
@@ -1882,6 +1967,52 @@ export default function AdminPage() {
         const kindRows = VIOLATION_KIND_ORDER.map((kind) => ({ kind, label: VIOLATION_KIND_LABEL[kind], count: kindCount.get(kind) || 0 })).filter((x) => x.count > 0);
         const kindTotal = kindRows.reduce((s, x) => s + x.count, 0);
         const topViolators = Array.from(violByEmp.values()).sort((a, b) => b.count - a.count).slice(0, 10);
+        type RateRow = { name: string; total: number; viol: number; violShare: number; boardShare: number };
+        const boardTotal = rows.length;
+        const violTotal = rows.filter((r) => r.status !== "match").length;
+        const rateSummary = (keyOf: (r: ActualRow) => string): RateRow[] => {
+          const map = new Map<string, { total: number; viol: number }>();
+          for (const r of rows) {
+            const k = (keyOf(r) || "").trim() || "—";
+            const cur = map.get(k) || { total: 0, viol: 0 };
+            cur.total += 1;
+            if (r.status !== "match") cur.viol += 1;
+            map.set(k, cur);
+          }
+          // النسب تُحسب من إجمالي الفلتر الحالي (كل المخالفات / كل الصاعدين)، لا من مجموعة الصف وحدها.
+          return Array.from(map.entries())
+            .map(([name, v]) => ({
+              name,
+              total: v.total,
+              viol: v.viol,
+              violShare: violTotal ? Math.round((v.viol / violTotal) * 1000) / 10 : 0,
+              boardShare: boardTotal ? Math.round((v.total / boardTotal) * 1000) / 10 : 0,
+            }))
+            .sort((a, b) => b.viol - a.viol || b.violShare - a.violShare || b.total - a.total);
+        };
+        const driverRates = rateSummary((r) => r.driver);
+        const companyRates = rateSummary((r) => r.company);
+        const departmentRates = rateSummary((r) => r.department);
+        const rateHeaders = ["#", "الاسم", "الصاعدون", "المخالفون", "% من المخالفات", "% من الصاعدين"];
+        const rateSection = (heading: string, list: RateRow[]): ReportSection => ({
+          heading,
+          headers: rateHeaders,
+          rows: [
+            ...list.map((x, i) => [i + 1, x.name, x.total, x.viol, `${x.violShare}%`, `${x.boardShare}%`]),
+            ["", "الإجمالي", boardTotal, violTotal, violTotal ? "100%" : "0%", boardTotal ? "100%" : "0%"],
+          ],
+        });
+        const rateCards: { title: string; list: RateRow[] }[] = [
+          { title: "نسبة المخالفين حسب السائق", list: driverRates },
+          { title: "نسبة المخالفين حسب الشركة", list: companyRates },
+          { title: "نسبة المخالفين حسب الإدارة", list: departmentRates },
+        ];
+        const exportSections: ReportSection[] = [
+          { heading: "الصاعدون الفعليون", headers: exportHeaders, rows: exportRows },
+          rateSection("نسبة المخالفين حسب السائق", driverRates),
+          rateSection("نسبة المخالفين حسب الشركة", companyRates),
+          rateSection("نسبة المخالفين حسب الإدارة", departmentRates),
+        ];
         const statusCell = (r: ActualRow) => {
           if (r.status === "match") return <span className="status status-completed">حسب الخطة</span>;
           return <span className="stack-cell"><span className="status status-cancelled">مخالف</span><small>{statusNoteOf(r)}</small></span>;
@@ -1893,10 +2024,17 @@ export default function AdminPage() {
                 <h2>الموظفون الفعليون (الصاعدون)</h2>
                 <span>كل من صعد فعلاً في رحلات يوم معيّن، مع اسم السائق ورقم الباص والمسار، وتحديد إن كان حسب خطة دوريته أم مخالفاً.</span>
               </div>
-              <div className="row-actions" style={{ alignItems: "flex-end" }}>
-                <label className="field" style={{ minWidth: 180 }}>
-                  <span>تاريخ الرحلة</span>
-                  <input type="date" value={actualDate} onChange={(e) => setActualDate(e.target.value)} />
+              <div className="row-actions" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: 8 }}>
+                {ACTUAL_PRESETS.map((p) => (
+                  <button key={p.key} className={`secondary-btn${actualPreset === p.key ? " active" : ""}`} onClick={() => applyActualPreset(p.key)}>{p.label}</button>
+                ))}
+                <label className="field" style={{ minWidth: 150 }}>
+                  <span>من تاريخ</span>
+                  <input type="date" value={lo} onChange={(e) => { setActualFrom(e.target.value); setActualPreset(""); }} />
+                </label>
+                <label className="field" style={{ minWidth: 150 }}>
+                  <span>إلى تاريخ</span>
+                  <input type="date" value={hi} onChange={(e) => { setActualTo(e.target.value); setActualPreset(""); }} />
                 </label>
                 <button className="secondary-btn" onClick={() => load(true)} disabled={loading}><RefreshCw size={16} />تحديث</button>
               </div>
@@ -1907,6 +2045,49 @@ export default function AdminPage() {
               <div className="metric"><div><span>مخالفون</span><strong>{all.length - count("match")}</strong></div></div>
               <div className="metric"><div><span>تسجيل مكرر (رحلة سابقة)</span><strong>{dupCount}</strong></div></div>
               <div className="metric"><div><span>منهم غير موظف/غير مسجّل</span><strong>{count("unknown") + count("nonemp")}</strong></div></div>
+            </div>
+            <div className="rate-summary-grid">
+              {rateCards.map((c) => {
+                const viol = c.list.reduce((s, x) => s + x.viol, 0);
+                const total = c.list.reduce((s, x) => s + x.total, 0);
+                const rate = total ? Math.round((viol / total) * 1000) / 10 : 0;
+                return (
+                  <div className="table-card" key={c.title}>
+                    <div className="panel-title" style={{ padding: "12px 14px" }}>
+                      <div><div><h2 style={{ fontSize: 15 }}>{c.title}</h2><span>مخالفون {viol} من {total} صاعد · نسبة المخالفات {rate}% (النسب من إجمالي الفلتر)</span></div></div>
+                    </div>
+                    <div className="table-scroll stack-scroll" style={{ maxHeight: 260 }}>
+                      <table className="table-stack">
+                        <thead><tr>{rateHeaders.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {c.list.length === 0 ? (
+                            <tr className="empty-row"><td colSpan={rateHeaders.length} style={{ textAlign: "center", color: "var(--muted)", padding: 16 }}>لا توجد بيانات</td></tr>
+                          ) : c.list.map((x, i) => (
+                            <tr key={x.name}>
+                              <td data-label="#">{i + 1}</td>
+                              <td data-label="الاسم"><strong>{x.name}</strong></td>
+                              <td data-label="الصاعدون">{x.total}</td>
+                              <td data-label="المخالفون">{x.viol}</td>
+                              <td data-label="% من المخالفات">{x.violShare}%</td>
+                              <td data-label="% من الصاعدين">{x.boardShare}%</td>
+                            </tr>
+                          ))}
+                          {c.list.length > 0 && (
+                            <tr className="ov-total">
+                              <td data-label="#">—</td>
+                              <td data-label="الاسم">الإجمالي</td>
+                              <td data-label="الصاعدون">{total}</td>
+                              <td data-label="المخالفون">{viol}</td>
+                              <td data-label="% من المخالفات">{viol ? "100%" : "0%"}</td>
+                              <td data-label="% من الصاعدين">{total ? "100%" : "0%"}</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <div className="form-panel import-panel" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
               <div className="input-wrap" style={{ flex: 1, minWidth: 220 }}>
@@ -1960,43 +2141,45 @@ export default function AdminPage() {
                 <input type="checkbox" checked={actualOnlyViolation} onChange={(e) => setActualOnlyViolation(e.target.checked)} />
                 <span>إظهار المخالفين فقط</span>
               </label>
-              <small className="muted">الرحلات الفعلية لهذا اليوم: {dayReports.length}</small>
+              <small className="muted">الرحلات الفعلية في الفترة: {rangeReports.length}</small>
               <span style={{ flex: 1, minWidth: 20 }} />
-              <button className="secondary-btn" onClick={() => downloadTable("الموظفون الفعليون", `الموظفون-الفعليون-${dateValue}.xls`, exportHeaders, exportRows)}><FileSpreadsheet size={16} /> Excel</button>
-              <button className="secondary-btn" onClick={() => printTableReport(actualTitle, actualSubtitle, exportHeaders, exportRows)}><Printer size={16} /> PDF</button>
+              <button className="secondary-btn" onClick={() => downloadSectionsXls(`الموظفون-الفعليون-${lo}${lo !== hi ? `_${hi}` : ""}.xls`, "الموظفون الفعليون", actualTitle, [actualSubtitle], exportSections)}><FileSpreadsheet size={16} /> Excel</button>
+              <button className="secondary-btn" onClick={() => printReportSections(actualTitle, [actualSubtitle], exportSections)}><Printer size={16} /> PDF</button>
               <button className="secondary-btn" onClick={() => openWhatsAppText(tableToText(actualTitle, actualSubtitle, exportHeaders, exportRows))}><MessageCircle size={16} /> واتساب</button>
             </div>
             <div className="table-card">
-              <div className="table-scroll" style={{ maxHeight: 560 }}>
-                <table>
+              <div className="table-hint">اسحب الجدول أفقياً لعرض كل الأعمدة، أو استخدم عرض البطاقات على الجوال.</div>
+              <div className="table-scroll stack-scroll" style={{ maxHeight: 560 }}>
+                <table className="table-stack">
                   <thead>
                     <tr>
-                      <th>#</th><th>الكود</th><th>الاسم</th><th>الخط (السكن)</th><th>الإدارة</th>
+                      <th>#</th><th>الكود</th><th>الاسم</th><th>التاريخ</th><th>الخط (السكن)</th><th>الإدارة</th>
                       <th>نوع الدوام</th><th>السائق</th><th>الباص</th><th>المسار</th><th>الرحلة</th><th>النوع</th><th>وقت الصعود</th><th>المطابقة</th><th>الملاحظة</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((r, i) => (
                       <tr key={`${r.tripNumber}-${r.code}-${i}`}>
-                        <td>{i + 1}</td>
-                        <td>{r.code || "—"}</td>
-                        <td><strong>{r.name || "—"}</strong></td>
-                        <td>{r.housing || "—"}</td>
-                        <td>{r.department || "—"}</td>
-                        <td>{r.schedule || "—"}</td>
-                        <td>{r.driver}</td>
-                        <td>{r.bus}</td>
-                        <td>{r.route}</td>
-                        <td>{r.tripNumber}</td>
-                        <td>{r.tripType}</td>
-                        <td>{r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "—"}</td>
-                        <td>{statusCell(r)}</td>
-                        <td>{r.note ? <span className="stack-cell"><small>{r.note}</small></span> : "—"}</td>
+                        <td data-label="#">{i + 1}</td>
+                        <td data-label="الكود">{r.code || "—"}</td>
+                        <td data-label="الاسم"><strong>{r.name || "—"}</strong></td>
+                        <td data-label="التاريخ">{r.date || "—"}</td>
+                        <td data-label="الخط (السكن)">{r.housing || "—"}</td>
+                        <td data-label="الإدارة">{r.department || "—"}</td>
+                        <td data-label="نوع الدوام">{r.schedule || "—"}</td>
+                        <td data-label="السائق">{r.driver}</td>
+                        <td data-label="الباص">{r.bus}</td>
+                        <td data-label="المسار">{r.route}</td>
+                        <td data-label="الرحلة">{r.tripNumber}</td>
+                        <td data-label="النوع">{r.tripType}</td>
+                        <td data-label="وقت الصعود">{r.boardedAt ? new Date(r.boardedAt).toLocaleString("ar-EG") : "—"}</td>
+                        <td data-label="المطابقة">{statusCell(r)}</td>
+                        <td data-label="الملاحظة">{r.note ? <span className="stack-cell"><small>{r.note}</small></span> : "—"}</td>
                       </tr>
                     ))}
                     {!rows.length && (
-                      <tr><td colSpan={14} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
-                        لا يوجد صاعدون فعليون لهذا التاريخ/الفلتر — ستظهر الحالات هنا فور وصول تقارير رحلات السائقين.
+                      <tr className="empty-row"><td colSpan={15} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>
+                        لا يوجد صاعدون فعليون لهذه الفترة/الفلتر — ستظهر الحالات هنا فور وصول تقارير رحلات السائقين.
                       </td></tr>
                     )}
                   </tbody>
@@ -2008,7 +2191,7 @@ export default function AdminPage() {
               <div className="table-card ov-card">
                 <div className="ov-card-title">
                   توزيع المخالفات حسب النوع
-                  <small>التاريخ: {dateValue} · إجمالي المخالفين {kindTotal}</small>
+                  <small>الفترة: {periodLabel} · إجمالي المخالفين {kindTotal}</small>
                 </div>
                 <div className="table-scroll">
                   <table className="ov-mini">
@@ -2038,7 +2221,7 @@ export default function AdminPage() {
               <div className="table-card ov-card">
                 <div className="ov-card-title">
                   أكثر الموظفين مخالفة
-                  <small>التاريخ: {dateValue} · أعلى {Math.min(10, topViolators.length)} موظف</small>
+                  <small>الفترة: {periodLabel} · أعلى {Math.min(10, topViolators.length)} موظف</small>
                 </div>
                 <div className="table-scroll">
                   <table className="ov-mini">

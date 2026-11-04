@@ -27,15 +27,33 @@ export default function LoginPage() {
     window.addEventListener("online", on);
     window.addEventListener("offline", off);
     loadSnapshot().catch(() => {});
+    const backendUser = getStoredUser();
+    const accessToken = window.localStorage.getItem("access_token");
     const session = loadLocalSession();
-    if (session) {
+
+    const isLocalDevBrowser =
+      ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname) &&
+      window.location.port === "3333" &&
+      !(window as any).Capacitor;
+
+    // الجلسة التي لديها رمز خادم صالح محفوظ يمكنها الانتقال مباشرة.
+    if (backendUser && accessToken) {
+      storeLocalSession(backendUser);
+      go(home(backendUser));
+      return;
+    }
+
+    // في المتصفح المحلي، أظهر شاشة الدخول بدل تجاوز المصادقة
+    // باستخدام جلسة PIN محلية فقط. يظل السلوك الأصلي للتطبيق خارج هذا الوضع.
+    if (session && !isLocalDevBrowser) {
       go(home(session));
       return;
     }
-    const backendUser = getStoredUser();
-    if (backendUser) {
+
+    if (backendUser && !isLocalDevBrowser) {
       storeLocalSession(backendUser);
       go(home(backendUser));
+      return;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -53,7 +71,8 @@ export default function LoginPage() {
       const name = username.trim();
       const res = await tryOnlineLogin(name, password);
       if (res.ok) {
-        go(home(res.user));
+        // كلمة مرور مؤقتة/افتراضية: الخادم يرفض بقية الطلبات حتى تُغيَّر.
+        go(res.user.must_change_password ? "/change-password" : home(res.user));
         return;
       }
       await loadSnapshot();

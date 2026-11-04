@@ -12,7 +12,7 @@ export function getStoredUser(): User | null { if (typeof window === "undefined"
 let signedOut = false;
 export function getBaseUrl(): string {
   // Serve local testing from the local backend: ignore any saved remote override.
-  if (isLocalPageHost()) return window.location.origin;
+  if (isLocalPageHost()) return `http://${window.location.hostname}:8001`;
   if (typeof window !== "undefined") {
     try {
       const cfg = JSON.parse(localStorage.getItem("ds_config") || "{}");
@@ -35,6 +35,7 @@ export const API_URL = (() => {
       return { render: () => `http://${host}:${port}` };
     }
   }
+  if (isLocalPageHost()) return { render: () => `http://${window.location.hostname}:8001` };
   return { render: () => window.location.origin };
 })();
 

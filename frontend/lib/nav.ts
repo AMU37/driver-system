@@ -1,5 +1,7 @@
 export function routePath(p: string): string {
   if (!p.startsWith("/")) return p;
+  // Use normal Next.js routes in development.
+  if (process.env.NODE_ENV === "development") return p;
   const q = p.indexOf("?");
   const base = q === -1 ? p : p.slice(0, q);
   const query = q === -1 ? "" : p.slice(q);

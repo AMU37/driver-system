@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { BookOpen, BusFront, CalendarClock, ChartColumn, History, LayoutDashboard, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
+import { ArchiveRestore, BookOpen, BusFront, CalendarClock, ChartColumn, History, LayoutDashboard, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
 import { logout } from "@/lib/api";
 import { autoPushPending, clearLocalSession } from "@/lib/offlineStore";
 import { useAuthGuard } from "@/lib/authGuard";
@@ -36,13 +36,23 @@ export function roleLabel(role?: string | null): string {
   return "مدير";
 }
 
+/** زر إجراء سريع في القائمة الجانبية (يفتح لوحة محددة داخل /admin عبر ?action=). */
+function QuickAction({ href, label, icon, match, pathname }: { href: string; label: string; icon: React.ReactNode; match: string; pathname: string }) {
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  const active = pathname.startsWith("/admin") && search.includes(match);
+  return <a href={routePath(href)} className={active ? "nav-link active" : "nav-link"}>{icon}<span>{label}</span></a>;
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
   const user = useAuthGuard();
-  const isAdmin = user && (user.role === "admin" || user.role === "supervisor");
-  const isViewer = user?.role === "viewer";
-  const supervisorCanViewAdmin = user?.role === "supervisor" ? canDo(user, "view") : true;
-  const nav = isAdmin && supervisorCanViewAdmin ? adminItems : isViewer || (isAdmin && !supervisorCanViewAdmin) ? viewerItems : driverItems;
+  useEffect(() => { setMounted(true); }, []);
+  const shellUser = mounted ? user : null;
+  const isAdmin = !!shellUser && (shellUser.role === "admin" || shellUser.role === "supervisor");
+  const isViewer = shellUser?.role === "viewer";
+  const supervisorCanViewAdmin = shellUser?.role === "supervisor" ? canDo(shellUser, "view") : true;
+  const nav = !mounted ? null : (isAdmin && supervisorCanViewAdmin ? adminItems : isViewer || (isAdmin && !supervisorCanViewAdmin) ? viewerItems : driverItems);
   useEffect(() => {
     if (!user || user.role !== "driver") return;
     const username = user.username;
@@ -64,7 +74,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="brand-mini"><BusFront size={20}/></div><div><strong>رحلات الموظفين</strong><small>Driver System V1.0</small></div></div>
         <nav>
-          {nav.map(([href, label, Icon]) => {
+          {nav?.map(([href, label, Icon]) => {
             const [base, query] = href.split("?");
             const pathMatch = pathname === base || pathname.startsWith(base + "/");
             const search = typeof window !== "undefined" ? window.location.search : "";
@@ -72,7 +82,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             return <a key={href} href={routePath(href)} className={active ? "nav-link active" : "nav-link"}><Icon size={19}/><span>{label}</span></a>;
           })}
         </nav>
-        <div className="sidebar-footer"><div className="user-chip"><div className="avatar"><UserRound size={18}/></div><div><strong>{user?.full_name || "المستخدم"}</strong><small>{roleLabel(user?.role)}</small></div></div><button className="logout-link" onClick={() => { logout(); clearLocalSession(); window.location.assign("/"); }}><LogOut size={18}/>خروج</button></div>
+        {isAdmin && supervisorCanViewAdmin && (
+          <div className="sidebar-quick">
+            <div className="sidebar-quick-title">إجراءات سريعة</div>
+            <QuickAction href="/admin?action=backup" label="نسخ احتياطي للبيانات" icon={<ArchiveRestore size={19} />} match="action=backup" pathname={pathname} />
+            <QuickAction href="/admin?action=plan" label="تخطيط رحلة للسائق" icon={<BusFront size={19} />} match="action=plan" pathname={pathname} />
+          </div>
+        )}
+        <div className="sidebar-footer"><div className="user-chip"><div className="avatar"><UserRound size={18}/></div><div><strong>{shellUser?.full_name || "المستخدم"}</strong><small>{roleLabel(shellUser?.role)}</small></div></div><button className="logout-link" onClick={() => { logout(); clearLocalSession(); window.location.assign("/"); }}><LogOut size={18}/>خروج</button></div>
       </aside>
       <main className="main-content">{children}</main>
     </div>
