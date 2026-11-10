@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BusFront, CheckCircle2, Clock3, Download, RefreshCw, Route, Send, Users2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
-import { completeLocalTrip, createManualTrip, getActiveLocalTrip, getAvailableBuses, getAvailableRoutes, getIncompleteLocalTrips, getPlannedForDriver, isOnline, listLocalTrips, loadSnapshot, localStats, pendingSyncCount, refreshLiveData, syncNow, syncSnapshotFromServer, snapshotMeta, TRIP_LOCATIONS, TRIP_TYPES, type LocalTrip, type SnapshotBus, type SnapshotPlanned, type SnapshotRoute, type TripType } from "@/lib/offlineStore";
+import { completeLocalTrip, createManualTrip, getActiveLocalTrip, getAvailableBuses, getAvailableRoutes, getConfig, getIncompleteLocalTrips, getPlannedForDriver, isOnline, listLocalTrips, loadSnapshot, localStats, pendingSyncCount, refreshLiveData, syncNow, syncSnapshotFromServer, snapshotMeta, TRIP_LOCATIONS, TRIP_TYPES, type LocalTrip, type SnapshotBus, type SnapshotPlanned, type SnapshotRoute, type TripType } from "@/lib/offlineStore";
 import { ActiveCard, PlannedCard } from "@/components/TripCard";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -29,6 +29,12 @@ export default function DashboardPage() {
   const [formErr, setFormErr] = useState("");
   const [updating, setUpdating] = useState(false);
   const [meta, setMeta] = useState<{ built_at: string; counts: Record<string, number> } | null>(() => typeof window !== "undefined" ? snapshotMeta() : null);
+
+  /** هل يوجد مسار إرسال جاهز؟ (رابط Power Automate أو جلسة خادم محفوظة). */
+  function hasDeliveryRoute(): boolean {
+    if (typeof window === "undefined") return false;
+    return !!getConfig().power_automate_url.trim() || !!window.localStorage.getItem("access_token") || !!window.localStorage.getItem("refresh_token");
+  }
 
   const refresh = useCallback(() => {
     if (!user) return;
@@ -199,6 +205,11 @@ export default function DashboardPage() {
       <button className="primary-btn full" onClick={doSync} disabled={syncing}>
         <Send size={18} style={{ verticalAlign: "-3px" }} /> {syncing ? "جارٍ الإرسال..." : `إرسال الرحلات المكتملة (${pending})`}
       </button>
+    )}
+    {pending > 0 && !hasDeliveryRoute() && (
+      <div className="alert warning">
+        الرحلات محفوظة على هذا الجهاز بأمان. لتفعيل الإرسال التلقائي يلزم الاتصال بالشبكة وتسجيل الدخول مرة واحدة (ثم يُرسل كل شيء تلقائياً دون الخروج مجدداً).
+      </div>
     )}
     {!ready ? <div className="skeleton-grid"><div className="skeleton"></div><div className="skeleton"></div><div className="skeleton wide"></div></div> : <>
       <div className="stats-grid">

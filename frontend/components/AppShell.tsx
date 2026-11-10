@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ArchiveRestore, BookOpen, BusFront, CalendarClock, ChartColumn, History, LayoutDashboard, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
 import { logout } from "@/lib/api";
-import { autoPushPending, clearLocalSession } from "@/lib/offlineStore";
+import { autoPushPending, clearCredentials, clearLocalSession } from "@/lib/offlineStore";
 import { useAuthGuard } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
 import { canDo } from "@/lib/permissions";
@@ -89,7 +89,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <QuickAction href="/admin?action=plan" label="تخطيط رحلة للسائق" icon={<BusFront size={19} />} match="action=plan" pathname={pathname} />
           </div>
         )}
-        <div className="sidebar-footer"><div className="user-chip"><div className="avatar"><UserRound size={18}/></div><div><strong>{shellUser?.full_name || "المستخدم"}</strong><small>{roleLabel(shellUser?.role)}</small></div></div><button className="logout-link" onClick={() => { logout(); clearLocalSession(); window.location.assign("/"); }}><LogOut size={18}/>خروج</button></div>
+        <div className="sidebar-footer"><div className="user-chip"><div className="avatar"><UserRound size={18}/></div><div><strong>{shellUser?.full_name || "المستخدم"}</strong><small>{roleLabel(shellUser?.role)}</small></div></div><button className="logout-link" onClick={() => { logout(); clearLocalSession(); clearCredentials(); window.location.assign("/"); }}><LogOut size={18}/>خروج</button></div>
       </aside>
       <main className="main-content">{children}</main>
     </div>

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { FileSpreadsheet, MessageCircle, Pencil, Printer, Trash2, UserPlus, Users2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import StatusBadge from "@/components/StatusBadge";
-import { addNewPassengerToTrip, addNonEmployeePassenger, addPassengerByCode, completeLocalTrip, getActiveLocalTrip, getAvailableDepartments, getConfig, getLocalTrip, isOnline, loadSnapshot, removePassengerFromTrip, syncNow, updatePassengerInTrip, type LocalPassenger, type LocalTrip, type SnapshotDepartment } from "@/lib/offlineStore";
+import { addNewPassengerToTrip, addNonEmployeePassenger, addPassengerByCode, completeLocalTrip, getActiveLocalTrip, getAvailableDepartments, getConfig, getLocalTrip, isOnline, loadSnapshot, MAX_TRIP_NOTE_LENGTH, removePassengerFromTrip, syncNow, updatePassengerInTrip, type LocalPassenger, type LocalTrip, type SnapshotDepartment } from "@/lib/offlineStore";
 import { downloadContent, openWhatsApp, printTripPdf, tripToXlsText } from "@/lib/export";
 import { useAuthGuard, currentUser } from "@/lib/authGuard";
 import { routePath } from "@/lib/nav";
@@ -25,6 +25,7 @@ export default function TripClient({ id }: { id?: string | null }) {
   const [editForm, setEditForm] = useState({ employee_code: "", name: "", coming_from: "", summoned_department: "", purpose: "employee" });
   const [editError, setEditError] = useState("");
   const [departments, setDepartments] = useState<SnapshotDepartment[]>([]);
+  const [note, setNote] = useState("");
 
   const resetForm = () => setForm({ employee_code: "", name: "", coming_from: "", summoned_department: "", purpose: "work" });
   // علامة الحقول الإجبارية
@@ -213,7 +214,7 @@ export default function TripClient({ id }: { id?: string | null }) {
     setBusy(true);
     setError("");
     try {
-      const t = completeLocalTrip(trip.id, user.username);
+      const t = completeLocalTrip(trip.id, user.username, note);
       if (!t) { setError("تعذر إكمال الرحلة — حاول مرة أخرى"); return; }
       refresh(t);
       const canSend = isOnline() && (!!getConfig().power_automate_url.trim() || !!window.localStorage.getItem("access_token"));
@@ -303,6 +304,12 @@ export default function TripClient({ id }: { id?: string | null }) {
         <div><span>عدد الصاعدين</span><strong>{trip.passengers.length}</strong></div>
         <div><span>وقت البدء</span><strong>{trip.started_at ? new Date(trip.started_at).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div>
       </div>
+      {trip.note && (
+        <div className="driver-note">
+          <strong>ملاحظة السائق</strong>
+          {trip.note}
+        </div>
+      )}
       {active && (
         <section className="section">
           <div className="section-title">
@@ -426,6 +433,19 @@ export default function TripClient({ id }: { id?: string | null }) {
       )}
       {active && (
         <section className="section actions-section">
+          <label className="field" style={{ width: "100%" }}>
+            <span>ملاحظة أو مقترح (اختياري)</span>
+            <textarea
+              value={note}
+              maxLength={MAX_TRIP_NOTE_LENGTH}
+              onChange={e => setNote(e.target.value.slice(0, MAX_TRIP_NOTE_LENGTH))}
+              rows={3}
+              placeholder="أي ملاحظة تخص الرحلة (ازدحام، مشكلة في الخط، موظف غير مسجّل...) أو مقترح للمشرف"
+            />
+            <small className="counter">
+              {note.length} / {MAX_TRIP_NOTE_LENGTH} — تُرسل الملاحظة مع الرحلة وتظهر لمشرف النقل.
+            </small>
+          </label>
           <button className="primary-btn" disabled={busy} onClick={complete}>
             {busy ? "جارٍ الإكمال والإرسال..." : "إكمال الرحلة وإرسالها"}
           </button>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { BusFront, KeyRound, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
 import { getStoredUser, type User } from "@/lib/api";
-import { backendBaseUrl, findDriver, hasLocalPin, isOnline, loadLocalSession, loadSnapshot, setLocalPin, storeLocalSession, tryOnlineLogin, verifyLocalPin, type SnapshotDriver } from "@/lib/offlineStore";
+import { backendBaseUrl, findDriver, hasLocalPin, isOnline, keepCredentials, loadLocalSession, loadSnapshot, setLocalPin, storeLocalSession, tryOnlineLogin, verifyLocalPin, type SnapshotDriver } from "@/lib/offlineStore";
 import { findLocalDriverAccount } from "@/lib/adminOps";
 import { routePath, homeForRole } from "@/lib/nav";
 
@@ -69,6 +69,10 @@ export default function LoginPage() {
     setError("");
     try {
       const name = username.trim();
+      // نحتفظ بكلمة المرور في الذاكرة لهذه الجلسة فقط: إن كان الخادم غير متاح
+      // الآن ودخل السائق برمز PIN، تُستخدم تلقائياً لفتح جلسة وإرسال الرحلات
+      // المعلّقة فور عودة الشبكة — بلا حاجة للخروج والدخول من جديد.
+      keepCredentials(name, password);
       const res = await tryOnlineLogin(name, password);
       if (res.ok) {
         // كلمة مرور مؤقتة/افتراضية: الخادم يرفض بقية الطلبات حتى تُغيَّر.

@@ -305,6 +305,8 @@ class TripReport(Base):
     driver_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     trip_number: Mapped[str] = mapped_column(String(150), index=True)
     employee_count: Mapped[int] = mapped_column(Integer, default=0)
+    # ملاحظة/مقترح اختياري يكتبه السائق عند إكمال الرحلة، تظهر للمشرف مع الرحلة.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     integration_status: Mapped[str] = mapped_column(String(30), default="server_only")
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

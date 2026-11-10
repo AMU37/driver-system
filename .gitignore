@@ -19,3 +19,6 @@ summary.md
 
 # Render
 .render/
+
+# Next dev artifacts inside the committed export dir (written by `next dev`)
+frontend/dist/dev/

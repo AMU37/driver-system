@@ -96,6 +96,8 @@ export type LocalTrip = {
   trip_type?: TripType | null;
   scheduled_start_at?: string | null;
   passengers: LocalPassenger[];
+  /** ملاحظة/مقترح اختياري يكتبه السائق عند إكمال الرحلة. */
+  note?: string | null;
   synced_at?: string | null;
   last_error?: string | null;
 };
@@ -110,6 +112,9 @@ const KEY_CONFIG = "ds_config";
 const KEY_LIVE_PLANNED = "ds_planned_live";
 const KEY_LIVE_EMPLOYEES = "ds_employees_live";
 const KEY_ADMIN_PLANS = "ds_admin_plans";
+
+/** أقصى طول لملاحظة السائق عند إكمال الرحلة (مطابق للحد في الخادم). */
+export const MAX_TRIP_NOTE_LENGTH = 1000;
 
 function pinKey(username: string): string {
   return KEY_PIN_PREFIX + encodeURIComponent(username);
@@ -266,6 +271,10 @@ async function refreshAccessToken(): Promise<boolean> {
       if (res.data.refresh_token) window.localStorage.setItem("refresh_token", res.data.refresh_token);
       if (res.data.user) window.localStorage.setItem("user", JSON.stringify(res.data.user));
       return true;
+    }
+    // رمز تحديث مرفوض نهائياً (منتهٍ/غير صالح): لا فائدة من إعادة المحاولة كل دقيقة.
+    if (res.status === 401 || res.status === 403) {
+      window.localStorage.removeItem("refresh_token");
     }
   } catch {
     /* ignore */
@@ -957,13 +966,15 @@ export function updatePassengerInTrip(
   return { trip, duplicated: false };
 }
 
-export function completeLocalTrip(tripId: string, driverUsername: string): LocalTrip | null {
+export function completeLocalTrip(tripId: string, driverUsername: string, note?: string | null): LocalTrip | null {
   const list = loadJSON<LocalTrip[]>(KEY_TRIPS, []);
   const trip = list.find((t) => t.id === tripId && t.driver_username === driverUsername);
   if (!trip || trip.status !== "boarding") return null;
   if (!trip.passengers.length) return null;
   trip.status = "completed";
   trip.completed_at = new Date().toISOString();
+  const cleanNote = (note ?? "").trim().slice(0, MAX_TRIP_NOTE_LENGTH);
+  trip.note = cleanNote || null;
   persistTrips(list);
   return trip;
 }
@@ -1001,6 +1012,7 @@ export function buildTripPayload(trip: LocalTrip): Record<string, unknown> {
       started_at: trip.started_at ?? null,
       completed_at: trip.completed_at ?? null,
       employee_count: trip.passengers.length,
+      note: trip.note ?? null,
       employees: trip.passengers.map((p) => ({
         employee_code: p.employee_code,
         name: p.name,
@@ -1022,8 +1034,10 @@ export function buildTripPayload(trip: LocalTrip): Record<string, unknown> {
 
 export async function reportTripToBackend(trip: LocalTrip): Promise<{ ok: boolean; error?: string }> {
   const base = backendBaseUrl();
+  if (!base) return { ok: false, error: "لا يوجد خادم متصل" };
+  if (isOnline()) await ensureServerSession(trip.driver_username);
   const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
-  if (!base || !token) return { ok: false, error: "لا يوجد خادم أو جلسة متصلة" };
+  if (!token) return { ok: false, error: "لا توجد جلسة متصلة — يلزم تسجيل الدخول عبر الشبكة مرة واحدة" };
   try {
     const res = await authorizedRequest(`/api/driver/trips/report`, {
       method: "POST",
@@ -1054,6 +1068,9 @@ async function runSync(driverUsername: string): Promise<SyncResult> {
   const config = getConfig();
   const url = config.power_automate_url.trim();
   const base = backendBaseUrl();
+  // قبل الإرسال: تأكد من جلسة صالحة (تجديد تلقائي) حتى لا تبقى الرحلات معلّقة
+  // بعد انتهاء صلاحية الرمز أو بعد دخول محلي بدون إنترنت.
+  if (base && isOnline()) await ensureServerSession(driverUsername);
   const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
   const hasBackend = !!base && !!token;
   if (!url && !hasBackend) {
@@ -1129,21 +1146,50 @@ export function clearCredentials() {
   pendingCredentials = null;
 }
 
+/** هل ينتهي رمز الوصول قريباً؟ (قراءة exp من JWT دون أي مكتبة إضافية) */
+function accessTokenExpiringSoon(token: string, skewSeconds = 120): boolean {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return false;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const json = typeof atob === "function" ? atob(padded) : "";
+    if (!json) return false;
+    const exp = Number(JSON.parse(json).exp);
+    if (!Number.isFinite(exp)) return false;
+    return exp * 1000 - Date.now() <= skewSeconds * 1000;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * يضمن جلسة خادم صالحة قبل إرسال الرحلات **دون إجبار السائق على الخروج والدخول**:
+ *  1) رمز وصول صالح ⇒ جاهز.
+ *  2) رمز منتهٍ/مفقود ⇒ تجديد تلقائي برمز التحديث المحفوظ (يبقى صالحاً ما دام
+ *     الجهاز يتصل بالشبكة مرة كل أسبوع).
+ *  3) تعذّر التجديد مع وجود بيانات الدخول في الذاكرة (دخول هذه الجلسة) ⇒ دخول تلقائي.
+ */
 async function ensureServerSession(username: string): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  if (window.localStorage.getItem("access_token")) return true;
-  if (!backendBaseUrl() || !isOnline() || !pendingCredentials || pendingCredentials.username !== username) return false;
-  const r = await tryOnlineLogin(pendingCredentials.username, pendingCredentials.password);
-  return r.ok;
+  const base = backendBaseUrl();
+  if (!base || !isOnline()) return false;
+  const token = window.localStorage.getItem("access_token");
+  if (token && !accessTokenExpiringSoon(token)) return true;
+  if (await refreshAccessToken()) return true;
+  if (pendingCredentials && pendingCredentials.username === username) {
+    const r = await tryOnlineLogin(pendingCredentials.username, pendingCredentials.password);
+    return r.ok;
+  }
+  return false;
 }
 
 export async function autoPushPending(driverUsername: string): Promise<number> {
   if (autoSyncInFlight || typeof window === "undefined" || !isOnline()) return 0;
   const config = getConfig();
-  const hasRoute = !!config.power_automate_url.trim() || (!!backendBaseUrl() && !!window.localStorage.getItem("access_token"));
-  const shouldReconnect = !hasRoute && !!config.power_automate_url.trim();
-  const ok = hasRoute || (await ensureServerSession(driverUsername));
-  if (!ok || !pendingSyncCount(driverUsername)) return 0;
+  // مسار الإرسال: رابط Power Automate أو جلسة خادم (تُجدَّد تلقائياً إن انتهت).
+  const hasRoute = !!config.power_automate_url.trim() || (await ensureServerSession(driverUsername));
+  if (!hasRoute || !pendingSyncCount(driverUsername)) return 0;
   autoSyncInFlight = true;
   try {
     const r = await syncNow(driverUsername);

@@ -112,13 +112,22 @@ async function handleResponse<T>(res: Response, base: string, path: string, opti
   if (res.status === 401 && path !== "/api/auth/login") {
     const refresh = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
     if (refresh && !signedOut) {
-      const refreshRes = await fetchWithTimeout(`${base}/api/auth/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: refresh }) });
+      let refreshRes: Response | null = null;
+      try {
+        refreshRes = await fetchWithTimeout(`${base}/api/auth/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: refresh }) });
+      } catch {
+        // انقطاع شبكة/إقلاع بارد للخادم: لا نُسقط الجلسة — نُبقي التوكن ونعيد المحاولة لاحقاً.
+        throw new Error("تعذر الاتصال بالخادم لتجديد الجلسة — تحقق من الشبكة وأعد المحاولة");
+      }
       if (refreshRes.ok) {
         const refreshed = await refreshRes.json();
         if (!signedOut) saveSession(refreshed);
         if (!signedOut) headers.set("Authorization", `Bearer ${refreshed.access_token}`);
         const retry = await fetchWithTimeout(`${base}${path}`, { ...options, headers, cache: "no-store" });
         if (retry.ok && retry.status !== 401) return retry.json();
+      } else if (refreshRes.status >= 500) {
+        // خطأ مؤقت في الخادم: لا نُسقط الجلسة.
+        throw new Error("الخادم غير جاهز الآن — أعد المحاولة بعد قليل");
       }
     }
     logout();

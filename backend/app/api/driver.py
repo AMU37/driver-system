@@ -180,11 +180,25 @@ class TripReportIn(BaseModel):
     trip: dict = {}
 
 
+MAX_TRIP_NOTE = 1000
+
+
+def _clean_note(value: object) -> str | None:
+    """ملاحظة السائق: نص حر اختياري، يُقصّ إلى حد آمن."""
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    return text_value[:MAX_TRIP_NOTE]
+
+
 @router.post("/trips/report")
 def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRole.driver)), db: Session = Depends(get_db)):
     """تسليم نسخة الرحلة المكتملة للخادم حتى يراها المشرف، مع إعادة توجيهها لـ Power Automate إن ضُبط."""
     data = payload.trip or {}
     trip_number = str(data.get("trip_id") or data.get("internal_id") or "")
+    note = _clean_note(data.get("note"))
     existing = db.scalar(select(Trip).where(Trip.trip_number == trip_number)) if trip_number else None
     # الرحلة تعتبر مكتملة إما من الحمولة نفسها (مكتملة محلياً على جهاز السائق
     # وعزل عن الخادم) أو من حالة الرحلة على الخادم.
@@ -223,6 +237,14 @@ def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRo
         if not same and not completed_at and not started_at:
             same = True
         if same:
+            # نفس التقرير أُعيد إرساله: نحدّث الملاحظة إن أضافها السائق هذه المرة.
+            if note and dup.note != note:
+                dup.note = note
+                stored_payload = dict(dup.payload or {})
+                stored_trip = dict(stored_payload.get("trip") or {})
+                stored_trip["note"] = note
+                stored_payload["trip"] = stored_trip
+                dup.payload = stored_payload
             db.commit()
             return {"ok": True, "report_id": dup.id, "duplicate": True, "message": "التقرير موجود مسبقاً"}
     if not employees:
@@ -233,6 +255,7 @@ def report_trip(payload: TripReportIn, user: User = Depends(require_roles(UserRo
         driver_name=user.full_name,
         trip_number=str(data.get("trip_id") or data.get("internal_id") or "UNKNOWN"),
         employee_count=len(employees),
+        note=note,
         payload=payload.model_dump(),
         integration_status="server_only",
     )

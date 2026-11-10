@@ -345,6 +345,7 @@ def trip_reports(user: User = Depends(require_roles(UserRole.supervisor, UserRol
             "origin": trip.get("origin"),
             "destination": trip.get("destination"),
             "trip_type": trip.get("trip_type"),
+            "note": r.note or trip.get("note"),
             "started_at": trip.get("started_at"),
             "completed_at": trip.get("completed_at"),
             "scheduled_start_at": trip.get("scheduled_start_at"),

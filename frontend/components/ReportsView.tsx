@@ -6,7 +6,7 @@ import TripsBreakdown from "@/components/TripsBreakdown";
 import { getAdminTripReports, getNewEmployees } from "@/lib/api";
 import {
   downloadContent, downloadTable, openReportTripWhatsApp, openWhatsAppText,
-  printTableReport, printTripReport, purposeLabelOf, reportEmployeeStatus, reportRouteLabel,
+  printTableReport, printTripReport, purposeLabelOf, reportEmployeeStatus, reportNoteOf, reportRouteLabel,
   reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText, tableToXlsText,
 } from "@/lib/export";
 import { Copy, Eye, FileSpreadsheet, MessageCircle, Printer, RefreshCw, TrendingUp, UserCheck, Users } from "lucide-react";
@@ -75,10 +75,11 @@ export default function ReportsView() {
       (r.raw && r.raw.trip && r.raw.trip.bus_number) || "—",
       reportRouteLabel(r),
       r.employee_count ?? 0,
+      reportNoteOf(r) || "—",
       r.received_at ? new Date(r.received_at).toLocaleString("ar-EG") : "—",
       reportStatusLabel(r.integration_status),
     ]);
-  const reportsHeaders = ["الرحلة", "السائق", "الباص", "الخط", "الصاعدون", "وصول التقرير", "الحالة"];
+  const reportsHeaders = ["الرحلة", "السائق", "الباص", "الخط", "الصاعدون", "ملاحظة السائق", "وصول التقرير", "الحالة"];
 
   const newEmpRows = () =>
     newEmployees.map((row) => {
@@ -148,12 +149,13 @@ export default function ReportsView() {
                     <td>{(r.raw && r.raw.trip && r.raw.trip.bus_number) || "—"}</td>
                     <td>{reportRouteLabel(r)}<small>{(r.raw && r.raw.trip && r.raw.trip.trip_type) ? `النوع: ${r.raw.trip.trip_type}` : ""}</small></td>
                     <td>{r.employee_count ?? 0}</td>
+                    <td>{reportNoteOf(r) || "—"}</td>
                     <td>{r.received_at ? new Date(r.received_at).toLocaleString("ar-EG") : "—"}</td>
                     <td><span className="status status-planned">{reportStatusLabel(r.integration_status)}</span></td>
                     <td><button className="secondary-btn" onClick={() => setViewReport(r)}><Eye size={15} />عرض</button></td>
                   </tr>
                 ))}
-                {!reports.length && <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>لا توجد تقارير بعد.</td></tr>}
+                {!reports.length && <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--muted)", padding: 24 }}>لا توجد تقارير بعد.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -221,6 +223,12 @@ export default function ReportsView() {
                 <div className="report-meta">
                   {meta.map(([k, v]) => <div className="report-meta-item" key={k}><span>{k}</span><strong>{v}</strong></div>)}
                 </div>
+                {reportNoteOf(viewReport) && (
+                  <div className="driver-note">
+                    <strong>ملاحظة / مقترح السائق</strong>
+                    {reportNoteOf(viewReport)}
+                  </div>
+                )}
                 <h3 className="report-list-title">الصاعدون ({employees.length})</h3>
                 <div className="table-scroll" style={{ maxHeight: 320 }}>
                   <table>

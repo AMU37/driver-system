@@ -19,7 +19,7 @@ import { AlertTriangle, ArchiveRestore, BusFront, ChevronDown, ChevronUp, Clipbo
 import { currentUser, useAuthGuard } from "@/lib/authGuard";
 import { getCachedSnapshot, getLocalAdminPlans, loadSnapshot, normalizeTripType, queueAdminPlan, removeLocalAdminPlan, TRIP_TYPES, type Snapshot, type TripType } from "@/lib/offlineStore";
 import { applyAdminOps, dropLocalCreate, getAdminOps, isLocalRowId, isNetworkError, queueAdminOp, removeAdminOp, replaceLocalCreatePayload, type AdminEntity } from "@/lib/adminOps";
-import { downloadContent, downloadTable, downloadSectionsXls, openReportTripWhatsApp, openWhatsAppText, printTableReport, printReportSections, printTripReport, reportEmployeeStatus, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText, type ReportSection } from "@/lib/export";
+import { downloadContent, downloadTable, downloadSectionsXls, openReportTripWhatsApp, openWhatsAppText, printTableReport, printReportSections, printTripReport, reportEmployeeStatus, reportNoteOf, reportStatusLabel, reportTripOf, reportTripText, reportsToXlsText, tableToText, type ReportSection } from "@/lib/export";
 import { effectiveTransportType, employeeCycle, isExcludedFromTransport, toDayIndex, type CycleInfo, type CycleStatus } from "@/lib/cycle";
 import { VIOLATION_KIND_LABEL, VIOLATION_KIND_ORDER, addDaysIso, daysInRange, violationKindId, type ViolationKind } from "@/lib/analytics";
 import { DRIVER_SCORE, TRIP_TIME_WINDOWS, evaluateDrivers, windowsLabel } from "@/lib/driverEval";
@@ -1576,7 +1576,12 @@ export default function AdminPage() {
                     const st = r.integration_status === "success" || r.integration_status === "server_only" ? "status-completed" : "status-needs_review";
                     return (
                       <tr key={r.id}>
-                        <td><strong>{r.trip_number}</strong></td>
+                        <td>
+                          <span className="stack-cell">
+                            <strong>{r.trip_number}</strong>
+                            {reportNoteOf(r) && <small>ملاحظة: {reportNoteOf(r)}</small>}
+                          </span>
+                        </td>
                         <td>{r.driver_name || r.driver_username || "—"}</td>
                         <td>{trip.bus_number || "—"}</td>
                         <td>{route}<small>{r.trip_type ? `النوع: ${r.trip_type}` : ""}</small></td>
@@ -1684,6 +1689,12 @@ export default function AdminPage() {
                         <div className="report-meta-item" key={k}><span>{k}</span><strong>{v}</strong></div>
                       ))}
                     </div>
+                    {reportNoteOf(viewReport) && (
+                      <div className="driver-note">
+                        <strong>ملاحظة / مقترح السائق</strong>
+                        {reportNoteOf(viewReport)}
+                      </div>
+                    )}
                     <h3 className="report-list-title">الصاعدون ({reportEmployees.length}) — المطابقة مع خطة دوام كل موظف</h3>
                     {tripDateRaw && (
                       <div className="alert success" style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between" }}>

@@ -131,7 +131,7 @@ export function reportStatusLabel(s?: string): string {
 
 export function reportsToXlsText(reports: any[]): string {
   const lines = [xlsHeader(), xlsStyles(), '<Worksheet ss:Name="رحلات السائقين">', "<Table>"];
-  lines.push(rs([{ v: "#", s: "hdr" }, { v: "الرحلة", s: "hdr" }, { v: "السائق", s: "hdr" }, { v: "الباص", s: "hdr" }, { v: "الخط", s: "hdr" }, { v: "الصاعدون", s: "hdr" }, { v: "وصول التقرير", s: "hdr" }, { v: "الحالة", s: "hdr" }]));
+  lines.push(rs([{ v: "#", s: "hdr" }, { v: "الرحلة", s: "hdr" }, { v: "السائق", s: "hdr" }, { v: "الباص", s: "hdr" }, { v: "الخط", s: "hdr" }, { v: "الصاعدون", s: "hdr" }, { v: "ملاحظة السائق", s: "hdr" }, { v: "وصول التقرير", s: "hdr" }, { v: "الحالة", s: "hdr" }]));
   reports.forEach((r, i) => {
     const trip = (r.raw && r.raw.trip) || {};
     const route = trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || "—");
@@ -143,6 +143,7 @@ export function reportsToXlsText(reports: any[]): string {
       { v: trip.bus_number || "—" },
       { v: route },
       { v: String(r.employee_count ?? 0), t: "Number" },
+      { v: reportNoteOf(r) || "—" },
       { v: fmt(r.received_at) },
       { v: status, s: toneOf(status) ?? undefined },
     ]));
@@ -295,6 +296,7 @@ export function tripText(trip: LocalTrip): string {
   lines.push(`البداية: ${fmt(trip.started_at)}`);
   if (trip.completed_at) lines.push(`الإكمال: ${fmt(trip.completed_at)}`);
   lines.push(`عدد الصاعدين: ${trip.passengers.length}`);
+  if (trip.note) lines.push(`ملاحظة السائق: ${trip.note}`);
   if (trip.passengers.length) {
     lines.push("الصاعدون:");
     trip.passengers.forEach((p, i) => {
@@ -337,6 +339,7 @@ const TRIP_PRINT_CSS = `
  td.t-warn{background:#fff7e4;color:#a26900;font-weight:700}
  td.t-info{background:#eaf2ff;color:#1769e0;font-weight:700}
  h2{font-size:15px;margin:20px 0 8px}
+ .note{background:#fff8e6;border:1px solid #f2d79b;color:#7a5300;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.9;white-space:pre-wrap;margin:10px 0}
  @media print{body{margin:10mm}}
 `;
 
@@ -359,6 +362,7 @@ export function printTripPdf(trip: LocalTrip) {
 <h1>تقرير رحلة ${esc(trip.trip_number)}</h1>
 <div class="meta">السائق: ${esc(trip.driver_username)} · الباص: ${esc(trip.bus_number || trip.planned_bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}</div>
 <div class="meta">البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
+${trip.note ? `<div class="note">ملاحظة السائق: ${esc(trip.note)}</div>` : ""}
 <h2>الصاعدون (${trip.passengers.length})</h2>
 <table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الجهة القادم منها</th><th>الجهة التي استدعته</th><th>الغرض</th><th>الحالة</th></tr></thead>
 <tbody>${rows}</tbody></table>
@@ -376,6 +380,13 @@ export function reportTripOf(report: any): { trip: Record<string, any>; employee
 export function reportRouteLabel(report: any): string {
   const { trip } = reportTripOf(report);
   return trip.origin && trip.destination ? `${trip.origin} → ${trip.destination}` : (trip.route || report.route || "—");
+}
+
+/** ملاحظة/مقترح السائق المرافقة للرحلة (من عمود التقرير أو من حمولة الرحلة). */
+export function reportNoteOf(report: any): string {
+  const { trip } = reportTripOf(report);
+  const value = report?.note || trip?.note || "";
+  return String(value).trim();
 }
 
 export function reportEmployeeStatus(p: any): string {
@@ -398,6 +409,8 @@ export function reportTripText(report: any): string {
   if (trip.started_at) lines.push(`البداية: ${fmt(trip.started_at)}`);
   if (trip.completed_at) lines.push(`الإكمال: ${fmt(trip.completed_at)}`);
   lines.push(`عدد الصاعدين: ${employees.length}`);
+  const note = reportNoteOf(report);
+  if (note) lines.push(`ملاحظة السائق: ${note}`);
   if (employees.length) {
     lines.push("الصاعدون:");
     employees.forEach((p, i) => {
@@ -441,6 +454,7 @@ export function printTripReport(report: any) {
 <h1>تقرير رحلة ${esc(report.trip_number)}</h1>
 <div class="meta">السائق: ${esc(report.driver_name || report.driver_username || "—")} · الباص: ${esc(trip.bus_number || "—")} · الخط: ${esc(route)}${trip.trip_type ? " · النوع: " + esc(trip.trip_type) : ""}${trip.company_code ? " · الشركة: " + esc(trip.company_code) : ""}</div>
 <div class="meta">الانطلاق المخطط: ${esc(fmt(trip.scheduled_start_at))} · البداية: ${esc(fmt(trip.started_at))}${trip.completed_at ? " · الإكمال: " + esc(fmt(trip.completed_at)) : ""}</div>
+${reportNoteOf(report) ? `<div class="note">ملاحظة السائق: ${esc(reportNoteOf(report))}</div>` : ""}
 <h2>الصاعدون (${employees.length})</h2>
 <table><thead><tr><th>#</th><th>الكود</th><th>الاسم</th><th>الإدارة</th><th>الشركة</th><th>الجهة القادم منها</th><th>الجهة التي استدعته</th><th>الوظيفة</th><th>السكن</th><th>الغرض</th><th>الحالة</th></tr></thead>
 <tbody>${rows}</tbody></table>

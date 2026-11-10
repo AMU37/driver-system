@@ -119,6 +119,7 @@ def migrate_schema() -> None:
             pass
     _migrate_employee_schedule_columns()
     _migrate_non_employee_columns()
+    _migrate_trip_report_columns()
     _normalize_datetime_columns()
     _ensure_pg_enum_values()
     _classify_transport_types()
@@ -200,6 +201,16 @@ def _migrate_employee_schedule_columns() -> None:
                 conn.exec_driver_sql(f"ALTER TABLE employees ADD COLUMN {column} {ddl_type}")
         except Exception:
             continue
+
+
+def _migrate_trip_report_columns() -> None:
+    """أعمدة أُضيفت إلى تقارير الرحلات بعد أول نشر (ملاحظة السائق)."""
+    if not column_exists("trip_reports", "note"):
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql("ALTER TABLE trip_reports ADD COLUMN note TEXT")
+        except Exception:
+            pass
 
 
 def _normalize_datetime_columns() -> None:
