@@ -1,8 +1,8 @@
 {
-  "version": "1.0.12",
-  "file": "web-1.0.12.zip",
-  "checksum": "34a64edd8ed12ef261aa85dfb07175a373244836d6e5a7410c636b571e0ce4ec",
-  "size": 508799,
+  "version": "1.0.13",
+  "file": "web-1.0.13.zip",
+  "checksum": "eb88ba1197f838e2a91e6875376dff3311eb8346168103cd1e17b0f4eb6ab1d5",
+  "size": 509952,
   "files": 95,
-  "built_at": "2026-11-14T14:59:50.506Z"
+  "built_at": "2026-11-14T15:41:51.400Z"
 }

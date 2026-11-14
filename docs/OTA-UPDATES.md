@@ -46,6 +46,37 @@ npm run bundle  →   backend/updates/web-<version>.zip + latest.json
 - `appReadyTimeout: 20000` — إن لم تُقلع النسخة الجديدة بنجاح خلال المهلة،
   ترجع الإضافة تلقائياً للنسخة السابقة (حماية من حزمة معطوبة).
 
+## كيف تتحقق أن التحديث يصل تلقائياً
+
+**من داخل التطبيق:** افتح «حول النظام» ← قسم «تحديثات التطبيق». يعرض:
+
+- «نسخة الواجهة (تُحدَّث تلقائياً)» — رقم الحزمة العاملة فعلاً على الجهاز.
+- «نسخة التطبيق المثبتة» — رقم APK (لا يتغيّر مع تحديثات OTA).
+- زر «التحقق من التحديثات الآن» — يفحص فوراً، ويخبرك إن كانت نسختك أحدث
+  نسخة أو ينزّل الجديدة ويطلب إعادة فتح التطبيق.
+
+**من الخادم:** بعد كل فحص يسجّل الخادم سطراً في سجلات Render (Logs):
+
+```text
+OTA check: client=1.0.12, latest=1.0.13 → offering web-1.0.13.zip
+OTA check: client=1.0.13, latest=1.0.13 → up to date
+```
+
+ظهور السطر يعني أن الجهاز يتصل فعلاً بالخادم، وأن النسخة التي أبلغ عنها هي ما
+تعمل عليه فعلاً.
+
+**الفحص اليدوي عبر HTTP** (بدون جهاز):
+
+```powershell
+# جهاز على نسخة قديمة → يجب أن يرجع version + url + checksum
+Invoke-RestMethod https://driver-system-mcku.onrender.com/api/app/updates -Method POST `
+  -ContentType "application/json" -Body '{"version_name":"1.0.12","version_build":"1.0.12"}'
+
+# جهاز محدّث → يجب أن يرجع kind=up_to_date بلا url
+Invoke-RestMethod https://driver-system-mcku.onrender.com/api/app/updates -Method POST `
+  -ContentType "application/json" -Body '{"version_name":"1.0.13","version_build":"1.0.12"}'
+```
+
 ## إصدار تحديث جديد (الروتين المعتاد)
 
 ```powershell

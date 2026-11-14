@@ -4,6 +4,12 @@
 ``/api/app/updates`` عند كل إقلاع/عودة للتطبيق، فترد هذه الوحدة ببيان
 النسخة الأحدث إن وُجدت. الملفات نفسها تُخدَّم من ``/api/app/bundle/{name}``.
 
+عقد الاستجابة (يتبع ما تفهمه الإضافة):
+* تحديث متاح  ⇒ ``{"version", "url", "checksum", ...}`` بلا ``kind``.
+* لا تحديث    ⇒ ``{"kind": "up_to_date", "version": <نسخة الجهاز>}``.
+  لا يصح إرجاع ``message`` وحده: الإضافة تتوقع دائماً ``version``/``kind``،
+  وإلا سجّلت خطأ فحص وهمياً عند كل إقلاع.
+
 مجلد الحزم ``backend/updates`` يُنشأ بأمر ``npm run bundle`` داخل frontend،
 ويحتوي ``latest.json`` + ملف zip لكل نسخة.
 """
@@ -11,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -19,6 +26,8 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
+
+logger = logging.getLogger("app.updates")
 
 router = APIRouter(prefix="/api/app", tags=["app-updates"])
 
@@ -78,22 +87,26 @@ def _public_base(request: Request) -> str:
 def check_update(request: Request, info: dict[str, Any] = Body(default_factory=dict)):
     """يستجيب لطلب فحص التحديث من التطبيق.
 
-    يُرجع بيانات الحزمة فقط إن كانت أحدث من نسخة الجهاز؛ وإلا يُرجع رسالة
-    بلا ``version`` حتى لا يحمّل التطبيق شيئاً.
+    يُرجع بيانات الحزمة فقط إن كانت أحدث من نسخة الجهاز؛ وإلا يُرجع
+    ``kind=up_to_date`` بلا رابط حتى لا يحمّل التطبيق شيئاً.
     """
+    current = _client_version(info)
     manifest = _load_manifest()
     if not manifest:
-        return {"message": "لا توجد حزم تحديث منشورة"}
+        logger.info("OTA check: client=%s, no bundle published", current or "unknown")
+        return {"kind": "up_to_date", "version": current, "message": "لا توجد حزم تحديث منشورة"}
 
     latest = str(manifest["version"])
-    current = _client_version(info)
     if current and _version_key(latest) <= _version_key(current):
-        return {"message": "أحدث نسخة مثبتة"}
+        logger.info("OTA check: client=%s, latest=%s → up to date", current, latest)
+        return {"kind": "up_to_date", "version": current, "message": "أحدث نسخة مثبتة"}
 
     filename = str(manifest["file"])
     if not _SAFE_NAME.match(filename):
-        return {"message": "بيان تحديث غير صالح"}
+        logger.error("OTA check: invalid manifest file name %r", filename)
+        return {"kind": "failed", "error": "bad_manifest", "version": current, "message": "بيان تحديث غير صالح"}
 
+    logger.info("OTA check: client=%s, latest=%s → offering %s", current or "unknown", latest, filename)
     return {
         "version": latest,
         "url": f"{_public_base(request)}/api/app/bundle/{filename}",

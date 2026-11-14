@@ -22,6 +22,9 @@ const config: CapacitorConfig = {
     CapacitorUpdater: {
       autoUpdate: "atBackground",
       updateUrl: `${UPDATE_BASE}/api/app/updates`,
+      // فحص دوري كل ١٥ دقيقة (القيمة بالثواني، والافتراضي 0 = معطّل) حتى
+      // يصل التحديث لمن يترك التطبيق مفتوحاً طوال اليوم دون خروجه منه.
+      periodCheckDelay: 900,
       // لا إحصاءات ولا قنوات خارجية: كل شيء عبر خادمنا.
       statsUrl: "",
       channelUrl: "",
