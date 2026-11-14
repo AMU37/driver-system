@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import NativeUpdater from "@/components/NativeUpdater";
 
 export const metadata: Metadata = {
   title: "نظام رحلات السائقين",
@@ -9,7 +10,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ar" dir="rtl">
-      <body>{children}</body>
+      <body>
+        <NativeUpdater />
+        {children}
+      </body>
     </html>
   );
 }

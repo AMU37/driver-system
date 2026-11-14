@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Break-glass account recovery. While this is empty the endpoint does not
     # exist (404). Set a random value >= 24 chars, recover, then clear it.
     recovery_key: str = ""
+    # عنوان الخادم العام (يُستخدم لبناء روابط تحديثات تطبيق الجوال). اتركه
+    # فارغاً ليُستنتج من الطلب مع إجبار https.
+    public_base_url: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

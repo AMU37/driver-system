@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api import admin, auth, driver, integration, manage, sync
+from app.api import admin, app_updates, auth, driver, integration, manage, sync
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine, migrate_schema
 from app.core.security import verify_password
@@ -16,7 +16,7 @@ from app.seed import seed_if_empty
 
 logger = logging.getLogger("uvicorn.error")
 
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 
 # Demo credentials seeded by seed.py — if detected in production the account is
 # locked until the password is changed.
@@ -64,6 +64,7 @@ app.include_router(admin.router)
 app.include_router(manage.router)
 app.include_router(integration.router)
 app.include_router(sync.router)
+app.include_router(app_updates.router)
 
 
 @app.on_event("startup")
